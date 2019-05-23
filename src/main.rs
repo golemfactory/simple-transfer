@@ -1,4 +1,4 @@
-use actix_web::{post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{post, web, App, HttpResponse, HttpServer};
 use futures::{future, prelude::*};
 use std::alloc::System;
 use std::net::IpAddr;
@@ -6,13 +6,15 @@ use std::path::PathBuf;
 use structopt::StructOpt;
 use actix::Addr;
 use crate::database::DatabaseManager;
+use std::sync::Arc;
 
 mod command;
 pub(crate) mod database;
 pub(crate) mod error;
+pub(crate) mod filemap;
 
 /// Simple resource transfer server for Golem Brass Network.
-#[derive(StructOpt)]
+#[derive(StructOpt, Clone)]
 struct ServerOpts {
     /// Database path
     #[structopt(long)]
@@ -52,7 +54,8 @@ struct ServerOpts {
 }
 
 struct State {
-    db : Addr<DatabaseManager>
+    db : Addr<DatabaseManager>,
+    opts : Arc<ServerOpts>,
 }
 
 impl State {
@@ -64,7 +67,20 @@ impl State {
         }).map_err(|e| actix_web::error::ErrorInternalServerError(e))
     }
 
+    fn addresses(&self) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
+        future::ok(HttpResponse::Ok().json(command::AddressesResult {
+            addresses: command::AddressSpec::TCP {
+                address: self.opts.host.to_string(),
+                port: self.opts.port,
+            },
+        }))
+    }
 
+    fn upload(&self, files : impl IntoIterator<Item=(PathBuf, String)>) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
+        let hashed : Result<Vec<filemap::FileMap>, _> = files.into_iter().map(|(path, file_name)| filemap::hash_file(&path, file_name)).collect();
+        
+        future::ok(HttpResponse::Ok().finish())
+    }
 }
 
 #[post("/api")]
@@ -75,17 +91,8 @@ fn api(
     eprintln!("command={:?}", body.0);
     match body.0 {
         command::Command::Id => Box::new(state.id()),
-        command::Command::Addresses => Box::new({
-            future::ok(HttpResponse::Ok().json(command::AddressesResult {
-                addresses: command::AddressSpec::TCP {
-                    address: "0.0.0.0".into(),
-                    port: 3282,
-                },
-            }))
-        }),
-        command::Command::Upload { files, timeout } => {
-            
-        }
+        command::Command::Addresses => Box::new(state.addresses()),
+        command::Command::Upload { files, timeout } =>Box::new(state.upload(files)),
         _ => unimplemented!(),
     }
 }
@@ -99,8 +106,9 @@ fn main() -> std::io::Result<()> {
     let sys = actix::System::new("hyperg");
 
     let db = database::database_manager(&args.db);
+    let opts = Arc::new(args);
 
-    HttpServer::new(move || App::new().data(State { db: db.clone() }).service(api))
+    HttpServer::new(move || App::new().data(State { db: db.clone(), opts: opts.clone() }).service(api))
         .bind("127.0.0.1:3292")?
         .run()
 }

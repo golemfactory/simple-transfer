@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::{fs, io, path};
+use crate::filemap::FileMap;
 
 /// metadata format
 const FORMAT_VERSION: u32 = 1;
@@ -23,18 +24,11 @@ struct Meta {
     flags: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct FileMap {
-    file_name: String,
-    file_size: u64,
-    blocks: Vec<u128>,
-}
 
 #[derive(Serialize, Deserialize)]
 struct FileDesc {
     map_hash: u128,
-    map: FileMap,
-    file: PathBuf,
+    files: Vec<(FileMap, PathBuf)>
 }
 
 pub struct DatabaseManager {
@@ -112,8 +106,9 @@ impl Actor for DatabaseManager {
             | e @ Err(Error::MetadataNotFound)
             | e @ Err(Error::InvalidJsonFormat(_)) => {
                 log::debug!("load meta error: {}", e.unwrap_err());
-                self.clear_dir();
-                self.init();
+                // TODO: Better error handling.
+                self.clear_dir().unwrap();
+                self.init().unwrap();
             }
             Err(e) => {
                 log::error!("init db fail: {}", e);
