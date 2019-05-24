@@ -15,6 +15,8 @@ opcode | code     | description
 -------|--------- | ------------
 0      | nop      | No operation. For keep alive connection
 1      | hello    | 
+2      | ask      | 
+3      | ask reply| 
 
 #### Hello
 
@@ -24,4 +26,15 @@ node_id         : u128,
 
 ```
 
+# Ask 
+
+```
+hash : u128 
+```
+
+# Ask Reply
+
+```
+packet_size : u32 // < 4MB
+```
 

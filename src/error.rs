@@ -16,7 +16,7 @@ pub enum Error {
     #[fail(display = "{} not working", _0)]
     ServiceFail(&'static str),
     #[fail(display = "{}", _0)]
-    Mailbox(actix::MailboxError)
+    Mailbox(actix::MailboxError),
 }
 
 macro_rules! convert {
@@ -37,4 +37,3 @@ convert! {
     serde_json::Error => InvalidJsonFormat,
     actix::MailboxError => Mailbox
 }
-

@@ -1,11 +1,11 @@
 use crate::error::Error;
+use crate::filemap::FileMap;
 use actix::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::{fs, io, path};
-use crate::filemap::FileMap;
 
 /// metadata format
 const FORMAT_VERSION: u32 = 1;
@@ -24,11 +24,10 @@ struct Meta {
     flags: Vec<String>,
 }
 
-
 #[derive(Serialize, Deserialize)]
 struct FileDesc {
     map_hash: u128,
-    files: Vec<(FileMap, PathBuf)>
+    files: Vec<(FileMap, PathBuf)>,
 }
 
 pub struct DatabaseManager {
@@ -144,21 +143,20 @@ pub fn database_manager(cache_path: &Option<PathBuf>) -> Addr<DatabaseManager> {
 struct GetId;
 
 impl Message for GetId {
-    type Result = Result<String ,Error>;
+    type Result = Result<String, Error>;
 }
 
 impl Handler<GetId> for DatabaseManager {
-    type Result = Result<String ,Error>;
+    type Result = Result<String, Error>;
 
     fn handle(&mut self, msg: GetId, ctx: &mut Self::Context) -> Self::Result {
         self.id.clone().ok_or(Error::ServiceFail("DatabaseManager"))
     }
 }
 
-pub fn id(m : &Addr<DatabaseManager>) -> impl Future<Item=String, Error=Error> {
+pub fn id(m: &Addr<DatabaseManager>) -> impl Future<Item = String, Error = Error> {
     m.send(GetId).then(|r| match r {
         Ok(r) => r,
         Err(e) => Err(e.into()),
     })
 }
-

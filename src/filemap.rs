@@ -1,13 +1,13 @@
-use serde::{Serialize, Deserialize};
-use std::path::Path;
-use std::{io, fs};
-use std::io::{Read, Write};
+use serde::{Deserialize, Serialize};
 use sha2::digest::Digest;
-use std::convert::TryInto;
-use std::cmp::min;
 use std::borrow::Borrow;
+use std::cmp::min;
+use std::convert::TryInto;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::{fs, io};
 
-pub const BLOCK_SIZE :usize = 1024*1024*4;
+pub const BLOCK_SIZE: usize = 1024 * 1024 * 4;
 
 #[derive(Serialize, Deserialize)]
 pub struct FileMap {
@@ -18,20 +18,25 @@ pub struct FileMap {
 
 #[derive(Serialize, Deserialize)]
 pub struct BlobDesc {
-    pub map_hash : u128,
-    pub files: Vec<FileMap>
+    pub map_hash: u128,
+    pub files: Vec<FileMap>,
 }
 
 #[inline]
-fn extract_results<D : Digest>(digest : D) -> u128 {
+fn extract_results<D: Digest>(digest: D) -> u128 {
     u128::from_le_bytes(digest.result()[0..16].try_into().unwrap())
 }
 
-pub fn hash_file(path : impl AsRef<Path>, file_name : impl Into<String>) -> Result<FileMap, io::Error> {
+pub fn hash_file(
+    path: impl AsRef<Path>,
+    file_name: impl Into<String>,
+) -> Result<FileMap, io::Error> {
     let mut file = fs::OpenOptions::new().read(true).open(path)?;
     let file_size = file.metadata()?.len();
-    let file_name= file_name.into();
-    let num_of_blocks = ((file_size + BLOCK_SIZE as u64-1) / BLOCK_SIZE as u64).try_into().unwrap();
+    let file_name = file_name.into();
+    let num_of_blocks = ((file_size + BLOCK_SIZE as u64 - 1) / BLOCK_SIZE as u64)
+        .try_into()
+        .unwrap();
 
     let mut buf = [0u8; 4096];
 
@@ -48,7 +53,7 @@ pub fn hash_file(path : impl AsRef<Path>, file_name : impl Into<String>) -> Resu
             let len = file.read(&mut buf[..to_read])?;
 
             if len == 0 {
-                return Err(io::Error::new(io::ErrorKind::Other, "Unexpected EOF"))
+                return Err(io::Error::new(io::ErrorKind::Other, "Unexpected EOF"));
             }
 
             rem_block_bytes -= len;
@@ -60,12 +65,14 @@ pub fn hash_file(path : impl AsRef<Path>, file_name : impl Into<String>) -> Resu
         blocks.push(hash);
     }
 
-
-    Ok(FileMap { file_name, file_size, blocks})
+    Ok(FileMap {
+        file_name,
+        file_size,
+        blocks,
+    })
 }
 
-
-pub fn hash_bundles(maps : impl IntoIterator<Item=impl Borrow<FileMap>>) -> u128 {
+pub fn hash_bundles(maps: impl IntoIterator<Item = impl Borrow<FileMap>>) -> u128 {
     let mut digest = sha2::Sha224::new();
     for map in maps {
         // TODO: Handle this
@@ -74,18 +81,20 @@ pub fn hash_bundles(maps : impl IntoIterator<Item=impl Borrow<FileMap>>) -> u128
     extract_results(digest)
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
     #[test]
     fn test_hash_file() {
-        let m = hash_file("/home/prekucki/Downloads/swift-5.0-RELEASE-ubuntu18.04.tar.gz", "test_task_1.tar.gz").unwrap();
+        let m = hash_file(
+            "/home/prekucki/Downloads/swift-5.0-RELEASE-ubuntu18.04.tar.gz",
+            "test_task_1.tar.gz",
+        )
+        .unwrap();
 
         for block in &m.blocks {
             eprintln!("block: {:032x}", block);
         }
         eprintln!("hash={:032x}", hash_bundles(Some(m)));
-
     }
 }

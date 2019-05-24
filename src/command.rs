@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub mod id;
-
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "command")]
 #[serde(rename_all = "lowercase")]
