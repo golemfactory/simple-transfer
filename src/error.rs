@@ -17,6 +17,8 @@ pub enum Error {
     ServiceFail(&'static str),
     #[fail(display = "{}", _0)]
     Mailbox(actix::MailboxError),
+    #[fail(display = "{}", _0)]
+    ProtoError(String),
 }
 
 macro_rules! convert {

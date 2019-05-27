@@ -1,4 +1,6 @@
-use crate::database::DatabaseManager;
+use crate::codec::hash_to_hex;
+use crate::command::UploadResult;
+use crate::database::{DatabaseManager, RegisterHash};
 use actix::Addr;
 use actix_web::{post, web, App, HttpResponse, HttpServer};
 use futures::{future, prelude::*};
@@ -12,6 +14,7 @@ use tokio_tcp::TcpListener;
 
 mod codec;
 mod command;
+mod connection;
 pub(crate) mod database;
 pub(crate) mod error;
 pub(crate) mod filemap;
@@ -66,6 +69,7 @@ impl State {
     fn id(&self) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
         database::id(&self.db)
             .and_then(|id| {
+                let id = crate::codec::hash_to_hex(id);
                 let version = env!("CARGO_PKG_VERSION").into();
                 Ok(HttpResponse::Ok().json(command::IdResult { id, version }))
             })
@@ -85,12 +89,22 @@ impl State {
         &self,
         files: impl IntoIterator<Item = (PathBuf, String)>,
     ) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
-        let hashed: Result<Vec<filemap::FileMap>, _> = files
+        let hashed: Result<Vec<(filemap::FileMap, PathBuf)>, _> = files
             .into_iter()
-            .map(|(path, file_name)| filemap::hash_file(&path, file_name))
+            .map(|(path, file_name)| (filemap::hash_file(&path, file_name), path))
             .collect();
 
-        future::ok(HttpResponse::Ok().finish())
+        let db = self.db.clone();
+
+        hashed.into_future().and_then(move |file_maps| {
+            db.send(RegisterHash(file_maps)).then(|r| match r {
+                Err(e) => Err(actix_web::error::ErrorInternalServerError("database lost")),
+                Ok(Err(e)) => Err(actix_web::error::ErrorInternalServerError(e)),
+                Ok(Ok(hash)) => future::ok(HttpResponse::Ok().json(UploadResult {
+                    hash: hash_to_hex(hash),
+                })),
+            })
+        })
     }
 }
 

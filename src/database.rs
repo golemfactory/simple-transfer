@@ -6,41 +6,37 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::{fs, io, path};
+use tokio_reactor::Handle;
 
 /// metadata format
 const FORMAT_VERSION: u32 = 1;
-
-fn hash_to_hex(hash: u128) -> String {
-    format!("{:032x}", hash)
-}
 
 #[derive(Serialize, Deserialize)]
 struct Meta {
     /// Metadata format version
     format: u32,
     /// Node id
-    id: String,
+    id: u128,
     /// Reserved for future use
     flags: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct FileDesc {
-    map_hash: u128,
-    files: Vec<(FileMap, PathBuf)>,
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FileDesc {
+    pub map_hash: u128,
+    pub files: Vec<(FileMap, PathBuf)>,
 }
 
 pub struct DatabaseManager {
     dir: PathBuf,
-    id: Option<String>,
-    files: HashMap<String, FileDesc>,
+    id: Option<u128>,
+    files: HashMap<u128, FileDesc>,
 }
 
 impl DatabaseManager {
     fn load_hash(&mut self, p: &path::Path) -> Result<(), Error> {
         let desc: FileDesc = bincode::deserialize_from(fs::OpenOptions::new().read(true).open(p)?)?;
-        let hash_key = hash_to_hex(desc.map_hash);
-        self.files.insert(hash_key, desc);
+        self.files.insert(desc.map_hash, desc);
         Ok(())
     }
 
@@ -49,7 +45,7 @@ impl DatabaseManager {
         let id: u128 = rand::thread_rng().gen();
         let meta = Meta {
             format: FORMAT_VERSION,
-            id: hash_to_hex(id),
+            id,
             flags: Vec::new(),
         };
         serde_json::to_writer_pretty(
@@ -143,20 +139,58 @@ pub fn database_manager(cache_path: &Option<PathBuf>) -> Addr<DatabaseManager> {
 struct GetId;
 
 impl Message for GetId {
-    type Result = Result<String, Error>;
+    type Result = Result<u128, Error>;
 }
 
 impl Handler<GetId> for DatabaseManager {
-    type Result = Result<String, Error>;
+    type Result = Result<u128, Error>;
 
     fn handle(&mut self, msg: GetId, ctx: &mut Self::Context) -> Self::Result {
         self.id.clone().ok_or(Error::ServiceFail("DatabaseManager"))
     }
 }
 
-pub fn id(m: &Addr<DatabaseManager>) -> impl Future<Item = String, Error = Error> {
+pub fn id(m: &Addr<DatabaseManager>) -> impl Future<Item = u128, Error = Error> {
     m.send(GetId).then(|r| match r {
         Ok(r) => r,
         Err(e) => Err(e.into()),
     })
+}
+
+pub struct GetHash(pub u128);
+
+impl Message for GetHash {
+    type Result = Result<Option<FileDesc>, Error>;
+}
+
+impl Handler<GetHash> for DatabaseManager {
+    type Result = Result<Option<FileDesc>, Error>;
+
+    fn handle(&mut self, msg: GetHash, ctx: &mut Self::Context) -> Self::Result {
+        if let Some(f) = self.files.get(&msg.0) {
+            Ok(Some(f.clone()))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+pub struct RegisterHash(pub Vec<(FileMap, PathBuf)>);
+
+impl Message for RegisterHash {
+    type Result = Result<u128, Error>;
+}
+
+impl Handler<RegisterHash> for DatabaseManager {
+    type Result = Result<u128, Error>;
+
+    fn handle(&mut self, msg: RegisterHash, ctx: &mut Self::Context) -> Self::Result {
+        let map_hash = crate::filemap::hash_bundles(msg.0.iter().map(|(map, path)| map));
+        let desc = FileDesc {
+            map_hash,
+            files: msg.0,
+        };
+        self.files.insert(map_hash, desc);
+        Ok(map_hash)
+    }
 }

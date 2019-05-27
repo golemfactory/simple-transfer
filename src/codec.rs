@@ -3,11 +3,18 @@ use bytes::{Buf, BufMut, ByteOrder, BytesMut, LittleEndian};
 use rand::ErrorKind;
 use serde::{Deserialize, Serialize};
 use std::convert::{TryFrom, TryInto};
+use std::fmt::Display;
 use std::io;
 use std::io::prelude::*;
 use tokio_io::codec::{Decoder, Encoder};
 
+const PROTO_VERSION: u8 = 1;
+
 const MAX_PACKET_SIZE: usize = 1024 * 1024 * 8;
+
+pub fn hash_to_hex(hash: u128) -> String {
+    format!("{:032x}", hash)
+}
 
 #[repr(u8)]
 pub enum Op {
@@ -26,6 +33,42 @@ pub enum StCommand {
     AskReply(AskReply),
     GetBlock(GetBlock),
     Block(Block),
+}
+
+impl StCommand {
+    pub fn hello(id: u128) -> StCommand {
+        StCommand::Hello(Hello::new(id))
+    }
+
+    pub fn ask_reply(hash: u128, files: Option<Vec<FileMap>>) -> Self {
+        StCommand::AskReply(AskReply { hash, files })
+    }
+
+    pub fn block(hash: u128, file_nr: u32, block_nr: u32, bytes: Vec<u8>) -> Self {
+        StCommand::Block(Block {
+            hash,
+            block_nr,
+            file_nr,
+            bytes,
+        })
+    }
+
+    pub fn display(&self) -> impl Display {
+        match self {
+            StCommand::Nop => format!("[nop]"),
+            StCommand::Hello(h) => format!("[hello id:{}, v:{}", h.node_id, h.proto_version),
+            StCommand::Ask(hash) => format!("[ask {}]", hash),
+            StCommand::AskReply(hash) => format!("[ask-replay ...]"),
+            StCommand::GetBlock(b) => format!(
+                "[get-block hash:{}, file-no:{}, block-no:{}]",
+                b.hash, b.file_nr, b.block_nr
+            ),
+            StCommand::Block(b) => format!(
+                "[block hash:{}, file-no:{}, block-no:{}]",
+                b.hash, b.file_nr, b.block_nr
+            ),
+        }
+    }
 }
 
 impl StCommand {
@@ -79,6 +122,19 @@ pub struct Hello {
     pub node_id: u128,
 }
 
+impl Hello {
+    pub fn is_valid(&self) -> bool {
+        self.proto_version == PROTO_VERSION
+    }
+
+    pub fn new(node_id: u128) -> Self {
+        Hello {
+            proto_version: PROTO_VERSION,
+            node_id,
+        }
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 pub struct Ask {
     pub hash: u128,
@@ -94,6 +150,7 @@ pub struct AskReply {
 #[derive(Default, Serialize, Deserialize)]
 pub struct GetBlock {
     pub hash: u128,
+    pub file_nr: u32,
     pub block_nr: u32,
 }
 
@@ -101,6 +158,7 @@ pub struct GetBlock {
 pub struct Block {
     pub hash: u128,
     pub block_nr: u32,
+    pub file_nr: u32,
     pub bytes: Vec<u8>,
 }
 
@@ -214,25 +272,34 @@ mod test {
         assert_eq!(ask_size, 16);
     }
 
-
     #[test]
     fn test_hello() {
         log::info!("start");
         let mut codec = StCodec::default();
 
         let mut buf = BytesMut::new();
-        codec.encode(StCommand::Hello(Hello { proto_version: 0, node_id: 10 }), &mut buf).unwrap();
+        codec
+            .encode(
+                StCommand::Hello(Hello {
+                    proto_version: 0,
+                    node_id: 10,
+                }),
+                &mut buf,
+            )
+            .unwrap();
 
         let mut r = buf.take();
         let v = codec.decode(&mut r).unwrap().unwrap();
         match v {
-            StCommand::Hello(Hello { proto_version, node_id }) => {
+            StCommand::Hello(Hello {
+                proto_version,
+                node_id,
+            }) => {
                 assert_eq!(proto_version, 0);
                 assert_eq!(node_id, 10)
             }
-            _ => assert!(false)
+            _ => assert!(false),
         }
-
     }
 
     #[test]
@@ -240,25 +307,31 @@ mod test {
         let mut codec = StCodec::default();
         let block = Block {
             hash: 0x1212deadbeef1212,
+            file_nr: 0,
             block_nr: 0,
-            bytes: vec![1,2,3,4,5,6]
+            bytes: vec![1, 2, 3, 4, 5, 6],
         };
 
         let mut buf = BytesMut::new();
-        codec.encode(StCommand::Block(block.clone()), &mut buf).unwrap();
+        codec
+            .encode(StCommand::Block(block.clone()), &mut buf)
+            .unwrap();
 
         let mut r = buf.take();
         let v = codec.decode(&mut r).unwrap().unwrap();
         match v {
-            StCommand::Block(Block { hash, block_nr, bytes }) => {
+            StCommand::Block(Block {
+                hash,
+                file_nr,
+                block_nr,
+                bytes,
+            }) => {
                 assert_eq!(hash, block.hash);
                 assert_eq!(block_nr, block.block_nr);
                 assert_eq!(bytes, block.bytes);
             }
-            _ => assert!(false)
+            _ => assert!(false),
         }
-
     }
-
 
 }

@@ -9,7 +9,7 @@ use std::{fs, io};
 
 pub const BLOCK_SIZE: usize = 1024 * 1024 * 4;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct FileMap {
     pub file_name: String,
     pub file_size: u64,
