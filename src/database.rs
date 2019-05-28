@@ -111,7 +111,7 @@ impl Actor for DatabaseManager {
             }
             Ok(()) => (),
         }
-        log::info!("db started id={}", self.id.as_ref().unwrap())
+        log::info!("db started id=0x{:032x}", self.id.as_ref().unwrap())
     }
 }
 

@@ -19,6 +19,10 @@ pub enum Error {
     Mailbox(actix::MailboxError),
     #[fail(display = "{}", _0)]
     ProtoError(String),
+    #[fail(display = "request canceled {}", _0)]
+    RequestCanceled(#[cause] futures::Canceled),
+    #[fail(display = "resource {:032x} not found", _0)]
+    ResourceNotFound(u128),
 }
 
 macro_rules! convert {
@@ -37,5 +41,6 @@ convert! {
     io::Error => IO,
     bincode::Error => InvalidBinFormat,
     serde_json::Error => InvalidJsonFormat,
-    actix::MailboxError => Mailbox
+    actix::MailboxError => Mailbox,
+    futures::Canceled => RequestCanceled
 }

@@ -1,5 +1,5 @@
 use crate::codec::Op::Hello;
-use crate::codec::{GetBlock, Op, StCodec, StCommand};
+use crate::codec::{AskReply, Block, GetBlock, Op, StCodec, StCommand};
 use crate::command::Command;
 use crate::database;
 use crate::database::{DatabaseManager, FileDesc};
@@ -8,7 +8,10 @@ use crate::filemap::{FileMap, BLOCK_SIZE};
 use actix::io::WriteHandler;
 use actix::prelude::*;
 use actix::{Actor, Addr, Context};
+use futures::task::AtomicTask;
+use futures::unsync::oneshot;
 use std::cmp::min;
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -24,6 +27,8 @@ pub struct Connection {
     framed: actix::io::FramedWrite<WriteHalf<TcpStream>, StCodec>,
     peer_id: Option<u128>,
     current_file: Option<database::FileDesc>,
+    block_requests: HashMap<GetBlock, oneshot::Sender<Block>>,
+    ask_requests: HashMap<u128, oneshot::Sender<AskReply>>,
 }
 
 impl Actor for Connection {
@@ -54,6 +59,8 @@ impl Connection {
                 peer_addr,
                 peer_id: None,
                 current_file: None,
+                block_requests: HashMap::new(),
+                ask_requests: HashMap::new(),
             }
         })
     }
@@ -227,3 +234,17 @@ impl StreamHandler<StCommand, io::Error> for Connection {
 }
 
 impl WriteHandler<io::Error> for Connection {}
+
+impl Handler<crate::codec::Ask> for Connection {
+    type Result = ActorResponse<Self, AskReply, Error>;
+
+    fn handle(&mut self, msg: crate::codec::Ask, ctx: &mut Self::Context) -> Self::Result {
+        let (rx, tx) = oneshot::channel();
+        if let Some(prev) = self.ask_requests.insert(msg.hash, rx) {
+            log::error!("duplicate sned");
+        } else {
+            self.framed.write(StCommand::Ask(msg.hash))
+        }
+        ActorResponse::r#async(tx.from_err().into_actor(self))
+    }
+}

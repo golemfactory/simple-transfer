@@ -1,4 +1,5 @@
 use crate::filemap::FileMap;
+use actix::Message;
 use bytes::{Buf, BufMut, ByteOrder, BytesMut, LittleEndian};
 use rand::ErrorKind;
 use serde::{Deserialize, Serialize};
@@ -140,6 +141,17 @@ pub struct Ask {
     pub hash: u128,
 }
 
+impl Ask {
+    #[inline]
+    pub fn new(hash: u128) -> Self {
+        Self { hash }
+    }
+}
+
+impl Message for Ask {
+    type Result = Result<AskReply, crate::error::Error>;
+}
+
 #[derive(Default, Serialize, Deserialize)]
 pub struct AskReply {
     pub hash: u128,
@@ -147,11 +159,15 @@ pub struct AskReply {
     pub files: Option<Vec<FileMap>>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct GetBlock {
     pub hash: u128,
     pub file_nr: u32,
     pub block_nr: u32,
+}
+
+impl Message for GetBlock {
+    type Result = Result<Block, crate::error::Error>;
 }
 
 #[derive(Default, Serialize, Deserialize, Clone)]

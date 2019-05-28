@@ -40,5 +40,6 @@ impl Handler<TcpConnect> for Server {
 
     fn handle(&mut self, msg: TcpConnect, _: &mut Context<Self>) {
         log::info!("Connection from: {}", msg.1);
+        let _conn = crate::connection::Connection::new(self.db.clone(), msg.0, msg.1);
     }
 }

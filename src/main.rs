@@ -11,13 +11,16 @@ use std::sync::Arc;
 use structopt::StructOpt;
 use tokio_reactor::Handle;
 use tokio_tcp::TcpListener;
+use actix_web::middleware::Logger;
 
 mod codec;
 mod command;
 mod connection;
 pub(crate) mod database;
+mod download;
 pub(crate) mod error;
 pub(crate) mod filemap;
+mod flatten;
 mod server;
 
 /// Simple resource transfer server for Golem Brass Network.
@@ -91,7 +94,7 @@ impl State {
     ) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
         let hashed: Result<Vec<(filemap::FileMap, PathBuf)>, _> = files
             .into_iter()
-            .map(|(path, file_name)| (filemap::hash_file(&path, file_name), path))
+            .map(|(path, file_name)| Ok((filemap::hash_file(&path, file_name)?, path)))
             .collect();
 
         let db = self.db.clone();
@@ -100,7 +103,7 @@ impl State {
             db.send(RegisterHash(file_maps)).then(|r| match r {
                 Err(e) => Err(actix_web::error::ErrorInternalServerError("database lost")),
                 Ok(Err(e)) => Err(actix_web::error::ErrorInternalServerError(e)),
-                Ok(Ok(hash)) => future::ok(HttpResponse::Ok().json(UploadResult {
+                Ok(Ok(hash)) => Ok(HttpResponse::Ok().json(UploadResult {
                     hash: hash_to_hex(hash),
                 })),
             })
@@ -124,7 +127,7 @@ fn api(
 
 fn main() -> std::io::Result<()> {
     let args = ServerOpts::from_args();
-    flexi_logger::Logger::with_env_or_str("hyperg=debug")
+    flexi_logger::Logger::with_env_or_str("hyperg=debug,actix_web::middleware::logger=info")
         .start()
         .unwrap();
 
@@ -136,19 +139,22 @@ fn main() -> std::io::Result<()> {
     let addr = net::SocketAddr::from((opts.host, opts.port));
     let listener = Arc::new(net::TcpListener::bind(&addr)?);
 
+    let server_opts = opts.clone();
+
     let _server = HttpServer::new(move || {
         let listener =
             TcpListener::from_std(listener.try_clone().unwrap(), &Handle::default()).unwrap();
         server::Server::new(db.clone(), listener);
 
         App::new()
+            .wrap(Logger::default())
             .data(State {
                 db: db.clone(),
                 opts: opts.clone(),
             })
             .service(api)
     })
-    .bind("127.0.0.1:3292")?
+    .bind((server_opts.rpc_addr, server_opts.rpc_port))?
     .start();
 
     sys.run()
