@@ -180,6 +180,20 @@ impl Connection {
             bytes,
         ));
     }
+
+    fn handle_block(&mut self, b : Block, ctx: &mut <Self as Actor>::Context) {
+        let get_block = GetBlock {
+            hash: b.hash,
+            file_nr: b.file_nr,
+            block_nr: b.block_nr
+        };
+        if let Some(r) = self.block_requests.remove(&get_block) {
+            let _ = r.send(b);
+        }
+        else {
+            log::error!("response for not requested block");
+        }
+    }
 }
 
 fn read_block(
@@ -225,6 +239,7 @@ impl StreamHandler<StCommand, io::Error> for Connection {
                 }
             }
             StCommand::GetBlock(b) => self.handle_get_block(b, ctx),
+            StCommand::Block(b) => self.handle_block(b ,ctx),
             p => {
                 log::error!("unexpected packet from: {}", self.peer_addr);
                 ctx.stop()
@@ -241,9 +256,24 @@ impl Handler<crate::codec::Ask> for Connection {
     fn handle(&mut self, msg: crate::codec::Ask, ctx: &mut Self::Context) -> Self::Result {
         let (rx, tx) = oneshot::channel();
         if let Some(prev) = self.ask_requests.insert(msg.hash, rx) {
-            log::error!("duplicate sned");
+            log::error!("duplicate ask");
         } else {
             self.framed.write(StCommand::Ask(msg.hash))
+        }
+        ActorResponse::r#async(tx.from_err().into_actor(self))
+    }
+}
+
+impl Handler<crate::codec::GetBlock> for Connection {
+    type Result = ActorResponse<Self, Block, Error>;
+
+    fn handle(&mut self, msg: GetBlock, ctx: &mut Self::Context) -> Self::Result {
+        let (rx, tx) = oneshot::channel();
+        if let Some(prev) = self.block_requests.insert(msg.clone(), rx) {
+            log::error!("duplicate get");
+        }
+        else {
+            self.framed.write(StCommand::GetBlock(msg))
         }
         ActorResponse::r#async(tx.from_err().into_actor(self))
     }

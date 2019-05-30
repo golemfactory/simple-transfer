@@ -38,7 +38,8 @@ pub fn hash_file(
         .try_into()
         .unwrap();
 
-    let mut buf = [0u8; 4096];
+    let mut buf = Vec::with_capacity(BLOCK_SIZE);
+    buf.resize(BLOCK_SIZE, 0);
 
     let mut blocks = Vec::with_capacity(num_of_blocks);
 

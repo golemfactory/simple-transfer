@@ -9,8 +9,9 @@ pub enum Command {
     Id,
     Addresses,
     Upload {
-        files: HashMap<PathBuf, String>,
+        files: Option<HashMap<PathBuf, String>>,
         timeout: Option<f64>,
+        hash: Option<String>,
     },
     Download {
         hash: String,

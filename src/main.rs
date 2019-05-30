@@ -1,17 +1,23 @@
-use crate::codec::hash_to_hex;
-use crate::command::UploadResult;
+use crate::codec::{hash_to_hex, GetBlock, Block};
+use crate::command::{UploadResult, PeerInfo, DownloadResult};
 use crate::database::{DatabaseManager, RegisterHash};
 use actix::Addr;
 use actix_web::{post, web, App, HttpResponse, HttpServer};
 use futures::{future, prelude::*};
 use std::alloc::System;
-use std::net::{self, IpAddr};
+use std::net::{self, IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use structopt::StructOpt;
 use tokio_reactor::Handle;
 use tokio_tcp::TcpListener;
 use actix_web::middleware::Logger;
+use crate::download::find_peer;
+use std::collections::HashSet;
+use crate::connection::Connection;
+use crate::filemap::FileMap;
+use crate::flatten::FlattenFuture;
+use std::io::Write;
 
 mod codec;
 mod command;
@@ -109,6 +115,53 @@ impl State {
             })
         })
     }
+
+    fn check(&self, hash : &str) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
+        future::ok(unimplemented!())
+    }
+
+    fn download(&self, hash: String, dest: PathBuf, peers: Vec<PeerInfo>, timeout: Option<f64>) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
+        eprintln!("parsing hash={}", hash);
+        let hash = u128::from_str_radix(&hash, 16).unwrap();
+        let peers : HashSet<_> = peers.into_iter().map(|peer_info| match peer_info {
+            PeerInfo::TCP(address, port) => SocketAddr::new(address.parse().unwrap(), port)
+        }).collect();
+
+        find_peer(hash, self.db.clone(), peers.into_iter().collect())
+            .and_then(move |(connection, file_map) : (Addr<Connection>, Vec<FileMap>)| {
+                use futures::prelude::*;
+                let files = file_map.clone();
+
+                futures::stream::iter_ok(file_map.into_iter().enumerate())
+                    .and_then(move |(file_no, file_map)| {
+                        let file_name = file_map.file_name;
+                        let hash = hash;
+                        let out_path = dest.join(file_name);
+                        let connection = connection.clone();
+
+                        let mut out_file = std::fs::OpenOptions::new().write(true).create_new(true).open(&out_path).unwrap();
+
+                        futures::stream::iter_ok(file_map.blocks.into_iter().enumerate())
+                            .and_then(move |(block_no, block_hash)| {
+                                connection.send(GetBlock {
+                                    hash,
+                                    file_nr: file_no as u32,
+                                    block_nr: block_no as u32,
+                                }).flatten()
+                            }).for_each(move |b : Block| {
+                            out_file.write_all(b.bytes.as_slice()).unwrap();
+                            Ok(())
+                        }).and_then(|()| {
+                            Ok(out_path)
+                        })
+                    })
+                    .collect().and_then(|files| {
+                    Ok(HttpResponse::Ok().json(DownloadResult {
+                        files: files
+                    }))
+                })
+            }).map_err(|e| actix_web::error::ErrorInternalServerError(e))
+    }
 }
 
 #[post("/api")]
@@ -120,7 +173,9 @@ fn api(
     match body.0 {
         command::Command::Id => Box::new(state.id()),
         command::Command::Addresses => Box::new(state.addresses()),
-        command::Command::Upload { files, timeout } => Box::new(state.upload(files)),
+        command::Command::Upload { files: Some(files), timeout, hash: None } => Box::new(state.upload(files)),
+        command::Command::Upload { files: None, timeout, hash: Some(hash) } => Box::new(state.check(&hash)),
+        command::Command::Download {hash , dest, peers, timeout} => Box::new(state.download(hash, dest, peers, timeout)),
         _ => unimplemented!(),
     }
 }
@@ -154,7 +209,7 @@ fn main() -> std::io::Result<()> {
             })
             .service(api)
     })
-    .bind((server_opts.rpc_addr, server_opts.rpc_port))?
+    .bind((server_opts.rpc_host, server_opts.rpc_port))?
     .start();
 
     sys.run()

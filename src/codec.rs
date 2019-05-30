@@ -159,7 +159,7 @@ pub struct AskReply {
     pub files: Option<Vec<FileMap>>,
 }
 
-#[derive(Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[derive(Default, Serialize, Deserialize, Hash, PartialEq, Eq, Clone)]
 pub struct GetBlock {
     pub hash: u128,
     pub file_nr: u32,
