@@ -1,7 +1,7 @@
 use crate::filemap::FileMap;
 use actix::Message;
 use bytes::{Buf, BufMut, ByteOrder, BytesMut, LittleEndian};
-use rand::ErrorKind;
+
 use serde::{Deserialize, Serialize};
 use std::convert::{TryFrom, TryInto};
 use std::fmt::Display;
@@ -59,7 +59,7 @@ impl StCommand {
             StCommand::Nop => format!("[nop]"),
             StCommand::Hello(h) => format!("[hello id:{}, v:{}", h.node_id, h.proto_version),
             StCommand::Ask(hash) => format!("[ask {}]", hash),
-            StCommand::AskReply(hash) => format!("[ask-replay ...]"),
+            StCommand::AskReply(_hash) => format!("[ask-replay ...]"),
             StCommand::GetBlock(b) => format!(
                 "[get-block hash:{}, file-no:{}, block-no:{}]",
                 b.hash, b.file_nr, b.block_nr
@@ -221,7 +221,7 @@ impl Decoder for StCodec {
     }
 }
 
-fn put_into_buf<T: Serialize>(size: usize, buf: &mut BytesMut, item: &T) -> io::Result<()> {
+fn put_into_buf<T: Serialize>(_size: usize, buf: &mut BytesMut, item: &T) -> io::Result<()> {
     let mut w = buf.writer();
     bincode::serialize_into(&mut w, item).map_err(|e| {
         match e.as_ref() {
@@ -342,7 +342,7 @@ mod test {
         match v {
             StCommand::Block(Block {
                 hash,
-                file_nr,
+                file_nr: _,
                 block_nr,
                 bytes,
             }) => {

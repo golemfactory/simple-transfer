@@ -1,6 +1,6 @@
-use crate::codec::Op::Hello;
-use crate::codec::{AskReply, Block, GetBlock, Op, StCodec, StCommand};
-use crate::command::Command;
+
+use crate::codec::{AskReply, Block, GetBlock, StCodec, StCommand};
+
 use crate::database;
 use crate::database::{DatabaseManager, FileDesc};
 use crate::error::Error;
@@ -8,13 +8,13 @@ use crate::filemap::{FileMap, BLOCK_SIZE};
 use actix::io::WriteHandler;
 use actix::prelude::*;
 use actix::{Actor, Addr, Context};
-use futures::task::AtomicTask;
+
 use futures::unsync::oneshot;
 use std::cmp::min;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 use std::{io, net};
 use tokio_codec::FramedRead;
 use tokio_io::io::WriteHalf;
@@ -34,7 +34,7 @@ pub struct Connection {
 impl Actor for Connection {
     type Context = Context<Self>;
 
-    fn started(&mut self, ctx: &mut Self::Context) {}
+    fn started(&mut self, _ctx: &mut Self::Context) {}
 }
 
 impl Connection {
@@ -68,23 +68,23 @@ impl Connection {
 
     fn send_hello(
         &mut self,
-        ctx: &mut <Self as Actor>::Context,
+        _ctx: &mut <Self as Actor>::Context,
     ) -> impl ActorFuture<Actor = Self, Item = (), Error = Error> {
         database::id(&self.db)
             .into_actor(self)
-            .and_then(|id, act: &mut Connection, ctx| {
+            .and_then(|id, act: &mut Connection, _ctx| {
                 fut::ok(act.framed.write(StCommand::hello(id)))
             })
     }
 
-    fn send_ask_reply(&mut self, file_desc: FileDesc, ctx: &mut <Self as Actor>::Context) {
+    fn send_ask_reply(&mut self, file_desc: FileDesc, _ctx: &mut <Self as Actor>::Context) {
         let reply = StCommand::ask_reply(
             file_desc.map_hash,
             Some(
                 file_desc
                     .files
                     .into_iter()
-                    .map(|(file_map, path)| file_map)
+                    .map(|(file_map, _path)| file_map)
                     .collect(),
             ),
         );
@@ -92,7 +92,7 @@ impl Connection {
         self.framed.write(reply)
     }
 
-    fn send_ask_reply_not_found(&mut self, hash: u128, ctx: &mut <Self as Actor>::Context) {
+    fn send_ask_reply_not_found(&mut self, hash: u128, _ctx: &mut <Self as Actor>::Context) {
         self.framed.write(StCommand::ask_reply(hash, None))
     }
 
@@ -130,7 +130,7 @@ impl Connection {
                     }
                 },
             )
-            .map_err(|e, act, ctx| {
+            .map_err(|_e, act, ctx| {
                 log::error!("fail to handle ask from: {}", &act.peer_addr);
                 ctx.stop()
             });
@@ -182,7 +182,7 @@ impl Connection {
         ));
     }
 
-    fn handle_block(&mut self, b: Block, ctx: &mut <Self as Actor>::Context) {
+    fn handle_block(&mut self, b: Block, _ctx: &mut <Self as Actor>::Context) {
         let get_block = GetBlock {
             hash: b.hash,
             file_nr: b.file_nr,
@@ -195,7 +195,7 @@ impl Connection {
         }
     }
 
-    fn handle_ask_reply(&mut self, b: AskReply, ctx: &mut <Self as Actor>::Context) {
+    fn handle_ask_reply(&mut self, b: AskReply, _ctx: &mut <Self as Actor>::Context) {
         if let Some(h) = self.ask_requests.remove(&b.hash) {
             let _ = h.send(b);
         } else {
@@ -266,9 +266,9 @@ impl WriteHandler<io::Error> for Connection {}
 impl Handler<crate::codec::Ask> for Connection {
     type Result = ActorResponse<Self, AskReply, Error>;
 
-    fn handle(&mut self, msg: crate::codec::Ask, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: crate::codec::Ask, _ctx: &mut Self::Context) -> Self::Result {
         let (rx, tx) = oneshot::channel();
-        if let Some(prev) = self.ask_requests.insert(msg.hash, rx) {
+        if let Some(_prev) = self.ask_requests.insert(msg.hash, rx) {
             log::error!("duplicate ask");
         } else {
             self.framed.write(StCommand::Ask(msg.hash))
@@ -280,9 +280,9 @@ impl Handler<crate::codec::Ask> for Connection {
 impl Handler<crate::codec::GetBlock> for Connection {
     type Result = ActorResponse<Self, Block, Error>;
 
-    fn handle(&mut self, msg: GetBlock, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: GetBlock, _ctx: &mut Self::Context) -> Self::Result {
         let (rx, tx) = oneshot::channel();
-        if let Some(prev) = self.block_requests.insert(msg.clone(), rx) {
+        if let Some(_prev) = self.block_requests.insert(msg.clone(), rx) {
             log::error!("duplicate get");
         } else {
             self.framed.write(StCommand::GetBlock(msg))
@@ -294,7 +294,7 @@ impl Handler<crate::codec::GetBlock> for Connection {
 impl Handler<crate::codec::Hello> for Connection {
     type Result = Result<(), Error>;
 
-    fn handle(&mut self, msg: crate::codec::Hello, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: crate::codec::Hello, _ctx: &mut Self::Context) -> Self::Result {
         self.framed.write(StCommand::hello(msg.node_id));
         Ok(())
     }

@@ -1,6 +1,6 @@
 use crate::database::DatabaseManager;
 use actix::prelude::*;
-use futures::prelude::*;
+
 use std::net;
 use tokio_tcp::{TcpListener, TcpStream};
 
@@ -28,7 +28,7 @@ pub struct TcpConnect(pub TcpStream, pub net::SocketAddr);
 impl Actor for Server {
     type Context = Context<Self>;
 
-    fn started(&mut self, ctx: &mut Self::Context) {
+    fn started(&mut self, _ctx: &mut Self::Context) {
         // TODO
     }
 }

@@ -8,7 +8,7 @@ use actix::Addr;
 use actix_web::middleware::Logger;
 use actix_web::{post, web, App, HttpResponse, HttpServer};
 use futures::{future, prelude::*};
-use std::alloc::System;
+
 use std::collections::HashSet;
 use std::io::Write;
 use std::net::{self, IpAddr, SocketAddr};
@@ -105,7 +105,7 @@ impl State {
 
         hashed.into_future().and_then(move |file_maps| {
             db.send(RegisterHash(file_maps)).then(|r| match r {
-                Err(e) => Err(actix_web::error::ErrorInternalServerError("database lost")),
+                Err(_e) => Err(actix_web::error::ErrorInternalServerError("database lost")),
                 Ok(Err(e)) => Err(actix_web::error::ErrorInternalServerError(e)),
                 Ok(Ok(hash)) => Ok(HttpResponse::Ok().json(UploadResult {
                     hash: hash_to_hex(hash),
@@ -143,7 +143,7 @@ impl State {
         hash: String,
         dest: PathBuf,
         peers: Vec<PeerInfo>,
-        timeout: Option<f64>,
+        _timeout: Option<f64>,
     ) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
         eprintln!("parsing hash={}", hash);
         let hash = u128::from_str_radix(&hash, 16).unwrap();
@@ -158,7 +158,6 @@ impl State {
             .and_then(
                 move |(connection, file_map): (Addr<Connection>, Vec<FileMap>)| {
                     use futures::prelude::*;
-                    let files = file_map.clone();
 
                     futures::stream::iter_ok(file_map.into_iter().enumerate())
                         .and_then(move |(file_no, file_map)| {
@@ -174,7 +173,7 @@ impl State {
                                 .unwrap();
 
                             futures::stream::iter_ok(file_map.blocks.into_iter().enumerate())
-                                .and_then(move |(block_no, block_hash)| {
+                                .and_then(move |(block_no, _block_hash)| {
                                     connection
                                         .send(GetBlock {
                                             hash,

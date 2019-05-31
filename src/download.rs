@@ -5,10 +5,10 @@ use crate::error::Error;
 use crate::filemap::FileMap;
 use actix::prelude::*;
 use futures::prelude::*;
-use std::{io, net};
-use tokio_codec::FramedRead;
-use tokio_io::io::WriteHalf;
-use tokio_io::AsyncRead;
+use std::{net};
+
+
+
 use tokio_tcp::TcpStream;
 
 pub fn connect(

@@ -3,7 +3,7 @@ use sha2::digest::Digest;
 use std::borrow::Borrow;
 use std::cmp::min;
 use std::convert::TryInto;
-use std::io::{Read, Write};
+use std::io::{Read};
 use std::path::Path;
 use std::{fs, io};
 

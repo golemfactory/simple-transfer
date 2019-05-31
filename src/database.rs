@@ -5,8 +5,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::{fs, io, path};
-use tokio_reactor::Handle;
+use std::{fs, path};
+
 
 /// metadata format
 const FORMAT_VERSION: u32 = 1;
@@ -94,7 +94,7 @@ impl DatabaseManager {
 impl Actor for DatabaseManager {
     type Context = SyncContext<Self>;
 
-    fn started(&mut self, ctx: &mut Self::Context) {
+    fn started(&mut self, _ctx: &mut Self::Context) {
         log::debug!("starting db on {}", self.dir.display());
         match self.load() {
             e @ Err(Error::InvalidMetaVersion { .. })
@@ -145,7 +145,7 @@ impl Message for GetId {
 impl Handler<GetId> for DatabaseManager {
     type Result = Result<u128, Error>;
 
-    fn handle(&mut self, msg: GetId, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, _msg: GetId, _ctx: &mut Self::Context) -> Self::Result {
         self.id.clone().ok_or(Error::ServiceFail("DatabaseManager"))
     }
 }
@@ -166,7 +166,7 @@ impl Message for GetHash {
 impl Handler<GetHash> for DatabaseManager {
     type Result = Result<Option<FileDesc>, Error>;
 
-    fn handle(&mut self, msg: GetHash, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: GetHash, _ctx: &mut Self::Context) -> Self::Result {
         if let Some(f) = self.files.get(&msg.0) {
             Ok(Some(f.clone()))
         } else {
@@ -184,8 +184,8 @@ impl Message for RegisterHash {
 impl Handler<RegisterHash> for DatabaseManager {
     type Result = Result<u128, Error>;
 
-    fn handle(&mut self, msg: RegisterHash, ctx: &mut Self::Context) -> Self::Result {
-        let map_hash = crate::filemap::hash_bundles(msg.0.iter().map(|(map, path)| map));
+    fn handle(&mut self, msg: RegisterHash, _ctx: &mut Self::Context) -> Self::Result {
+        let map_hash = crate::filemap::hash_bundles(msg.0.iter().map(|(map, _path)| map));
         let desc = FileDesc {
             map_hash,
             files: msg.0,
