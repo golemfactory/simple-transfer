@@ -14,12 +14,14 @@ use log::Level;
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::io::Write;
-use std::net::{self, IpAddr, SocketAddr};
+use std::net::{self, IpAddr, SocketAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use structopt::StructOpt;
 use tokio_reactor::Handle;
 use tokio_tcp::TcpListener;
+use crate::error::Error;
+use std::str::FromStr;
 
 mod codec;
 mod command;
@@ -47,7 +49,7 @@ struct ServerOpts {
     port: u16,
 
     /// IP address for RPC to listen on
-    #[structopt(long, default_value = "127.0.0.1")]
+    #[structopt(long, default_value = "127.0.0.1", parse(try_from_str = "resolve_host"))]
     rpc_host: IpAddr,
 
     /// TCP port for RPC to listen on
@@ -78,6 +80,16 @@ struct ServerOpts {
 struct State {
     db: Addr<DatabaseManager>,
     opts: Arc<ServerOpts>,
+}
+
+
+fn resolve_host(src: &str) -> Result<IpAddr, <IpAddr as FromStr>::Err> {
+    use std::net::IpAddr;
+
+    match src {
+        "localhost" => Ok(Ipv4Addr::LOCALHOST.into()),
+        _ => src.parse()
+    }
 }
 
 const APP_VERSION : &str = env!("CARGO_PKG_VERSION");
