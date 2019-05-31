@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::{fs, path};
 
-
 /// metadata format
 const FORMAT_VERSION: u32 = 1;
 

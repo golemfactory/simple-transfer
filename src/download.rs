@@ -5,9 +5,7 @@ use crate::error::Error;
 use crate::filemap::FileMap;
 use actix::prelude::*;
 use futures::prelude::*;
-use std::{net};
-
-
+use std::net;
 
 use tokio_tcp::TcpStream;
 

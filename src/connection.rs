@@ -1,4 +1,3 @@
-
 use crate::codec::{AskReply, Block, GetBlock, StCodec, StCommand};
 
 use crate::database;
@@ -14,7 +13,7 @@ use std::cmp::min;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
-use std::path::{Path};
+use std::path::Path;
 use std::{io, net};
 use tokio_codec::FramedRead;
 use tokio_io::io::WriteHalf;
@@ -209,6 +208,12 @@ fn read_block(
     file_map: &FileMap,
     block_no: u32,
 ) -> Result<Vec<u8>, io::Error> {
+    log::debug!(
+        "read block for: [{}], block_no={}, file_name={}",
+        path.as_ref().display(),
+        block_no,
+        file_map.file_name
+    );
     let offset = block_no as u64 * BLOCK_SIZE as u64;
     if file_map.file_size < offset {
         return Err(io::Error::new(ErrorKind::Other, "invalid offset"));
