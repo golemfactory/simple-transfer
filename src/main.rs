@@ -104,13 +104,33 @@ impl State {
         let db = self.db.clone();
 
         hashed.into_future().and_then(move |file_maps| {
-            db.send(RegisterHash(file_maps)).then(|r| match r {
-                Err(_e) => Err(actix_web::error::ErrorInternalServerError("database lost")),
-                Ok(Err(e)) => Err(actix_web::error::ErrorInternalServerError(e)),
-                Ok(Ok(hash)) => Ok(HttpResponse::Ok().json(UploadResult {
-                    hash: hash_to_hex(hash),
-                })),
-            })
+            let inline_data = if file_maps.len() == 1 {
+                if file_maps[0].0.file_size < 200 {
+                    match std::fs::read(&file_maps[0].1) {
+                        Ok(v) => v,
+                        Err(e) => return future::Either::B(future::err(e.into())),
+                    }
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+
+            future::Either::A(
+                db.send(RegisterHash {
+                    files: file_maps,
+                    valid_to: None,
+                    inline_data,
+                })
+                .then(|r| match r {
+                    Err(_e) => Err(actix_web::error::ErrorInternalServerError("database lost")),
+                    Ok(Err(e)) => Err(actix_web::error::ErrorInternalServerError(e)),
+                    Ok(Ok(hash)) => Ok(HttpResponse::Ok().json(UploadResult {
+                        hash: hash_to_hex(hash),
+                    })),
+                }),
+            )
         })
     }
 
@@ -127,7 +147,7 @@ impl State {
                     .flatten()
                     .map_err(|e| actix_web::error::ErrorInternalServerError(e))
             })
-            .and_then(|r: Option<database::FileDesc>| {
+            .and_then(|r: Option<Arc<database::FileDesc>>| {
                 if let Some(desc) = r {
                     Ok(HttpResponse::Ok().json(UploadResult {
                         hash: hash_to_hex(desc.map_hash),
@@ -223,7 +243,12 @@ fn api(
             peers,
             timeout,
         } => Box::new(state.download(hash, dest, peers, timeout)),
-        _ => unimplemented!(),
+        other_command => {
+            log::warn!("bad command: {:?}", other_command);
+            Box::new(future::err(actix_web::error::ErrorBadRequest(format!(
+                "invalid command"
+            ))))
+        }
     }
 }
 

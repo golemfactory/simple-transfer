@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 use std::path::Path;
+use std::sync::Arc;
 use std::{io, net};
 use tokio_codec::FramedRead;
 use tokio_io::io::WriteHalf;
@@ -25,7 +26,7 @@ pub struct Connection {
     peer_addr: net::SocketAddr,
     framed: actix::io::FramedWrite<WriteHalf<TcpStream>, StCodec>,
     peer_id: Option<u128>,
-    current_file: Option<database::FileDesc>,
+    current_file: Option<Arc<database::FileDesc>>,
     block_requests: HashMap<GetBlock, oneshot::Sender<Block>>,
     ask_requests: HashMap<u128, oneshot::Sender<AskReply>>,
 }
@@ -98,7 +99,7 @@ impl Connection {
     fn handle_ask(&mut self, hash: u128, ctx: &mut <Self as Actor>::Context) {
         if let Some(file_desc) = self.current_file.clone() {
             if file_desc.map_hash == hash {
-                return self.send_ask_reply(file_desc, ctx);
+                return self.send_ask_reply(file_desc.as_ref().clone(), ctx);
             }
         }
 
@@ -113,11 +114,11 @@ impl Connection {
             })
             .into_actor(self)
             .and_then(
-                move |file_desc: Option<FileDesc>, mut act, ctx| match file_desc {
+                move |file_desc: Option<Arc<FileDesc>>, act: &mut Self, ctx| match file_desc {
                     Some(file_desc) => {
                         if file_desc.map_hash == reply_hash {
                             act.current_file = Some(file_desc.clone());
-                            act.send_ask_reply(file_desc, ctx);
+                            act.send_ask_reply(file_desc.as_ref().clone(), ctx);
                             fut::ok(())
                         } else {
                             panic!("unexpected result on db call")
@@ -152,6 +153,17 @@ impl Connection {
                 return;
             }
         };
+
+        if file_map.inline_data.len() > 0 && get_block.file_nr == 0 && get_block.block_nr == 0 {
+            self.framed.write(StCommand::block(
+                get_block.hash,
+                get_block.file_nr,
+                get_block.block_nr,
+                file_map.inline_data.clone(),
+            ));
+            return;
+        }
+
         let (map, path) = match file_map.files.get(get_block.file_nr as usize) {
             Some((ref map, ref path)) => (map, path),
             None => {
@@ -241,6 +253,7 @@ fn read_block(
 
 impl StreamHandler<StCommand, io::Error> for Connection {
     fn handle(&mut self, item: StCommand, ctx: &mut Self::Context) {
+        log::debug!("incomming packet={}", item.display());
         match item {
             StCommand::Hello(h) => self.peer_id = Some(h.node_id),
             StCommand::Ask(hash) => {

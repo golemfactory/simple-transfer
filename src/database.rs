@@ -5,7 +5,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::{fs, path};
+use std::sync::Arc;
+use std::{fs, path, time};
 
 /// metadata format
 const FORMAT_VERSION: u32 = 1;
@@ -24,18 +25,20 @@ struct Meta {
 pub struct FileDesc {
     pub map_hash: u128,
     pub files: Vec<(FileMap, PathBuf)>,
+    pub inline_data: Vec<u8>,
+    pub valid_to: Option<time::SystemTime>,
 }
 
 pub struct DatabaseManager {
     dir: PathBuf,
     id: Option<u128>,
-    files: HashMap<u128, FileDesc>,
+    files: HashMap<u128, Arc<FileDesc>>,
 }
 
 impl DatabaseManager {
     fn load_hash(&mut self, p: &path::Path) -> Result<(), Error> {
         let desc: FileDesc = bincode::deserialize_from(fs::OpenOptions::new().read(true).open(p)?)?;
-        self.files.insert(desc.map_hash, desc);
+        self.files.insert(desc.map_hash, Arc::new(desc));
         Ok(())
     }
 
@@ -159,11 +162,11 @@ pub fn id(m: &Addr<DatabaseManager>) -> impl Future<Item = u128, Error = Error> 
 pub struct GetHash(pub u128);
 
 impl Message for GetHash {
-    type Result = Result<Option<FileDesc>, Error>;
+    type Result = Result<Option<Arc<FileDesc>>, Error>;
 }
 
 impl Handler<GetHash> for DatabaseManager {
-    type Result = Result<Option<FileDesc>, Error>;
+    type Result = Result<Option<Arc<FileDesc>>, Error>;
 
     fn handle(&mut self, msg: GetHash, _ctx: &mut Self::Context) -> Self::Result {
         if let Some(f) = self.files.get(&msg.0) {
@@ -174,7 +177,11 @@ impl Handler<GetHash> for DatabaseManager {
     }
 }
 
-pub struct RegisterHash(pub Vec<(FileMap, PathBuf)>);
+pub struct RegisterHash {
+    pub files: Vec<(FileMap, PathBuf)>,
+    pub valid_to: Option<time::SystemTime>,
+    pub inline_data: Vec<u8>,
+}
 
 impl Message for RegisterHash {
     type Result = Result<u128, Error>;
@@ -184,12 +191,14 @@ impl Handler<RegisterHash> for DatabaseManager {
     type Result = Result<u128, Error>;
 
     fn handle(&mut self, msg: RegisterHash, _ctx: &mut Self::Context) -> Self::Result {
-        let map_hash = crate::filemap::hash_bundles(msg.0.iter().map(|(map, _path)| map));
+        let map_hash = crate::filemap::hash_bundles(msg.files.iter().map(|(map, _path)| map));
         let desc = FileDesc {
             map_hash,
-            files: msg.0,
+            files: msg.files,
+            inline_data: msg.inline_data,
+            valid_to: msg.valid_to,
         };
-        self.files.insert(map_hash, desc);
+        self.files.insert(map_hash, Arc::new(desc));
         Ok(map_hash)
     }
 }
