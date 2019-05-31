@@ -9,10 +9,13 @@ use actix_web::middleware::Logger;
 use actix_web::{post, web, App, HttpResponse, HttpServer};
 use futures::{future, prelude::*};
 
+use flexi_logger::Duplicate;
+use log::Level;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::io::Write;
 use std::net::{self, IpAddr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use structopt::StructOpt;
 use tokio_reactor::Handle;
@@ -64,7 +67,7 @@ struct ServerOpts {
 
     /// Set the default logging level
     #[structopt(long, default_value = "info")]
-    loglevel: String,
+    loglevel: log::Level,
 }
 
 struct State {
@@ -252,11 +255,50 @@ fn api(
     }
 }
 
+fn log_string_for_level(level: &Level) -> &'static str {
+    match level {
+        Level::Error => "error",
+        Level::Info => "info",
+        Level::Debug => "hyperg=debug,info",
+        Level::Trace => "hyperg=trace,info",
+        Level::Warn => "hyperg=info,warn",
+    }
+}
+
+fn base_name(file_name: &OsStr) -> String {
+    let s = file_name.to_string_lossy();
+    if let Some(idx) = s.find(".") {
+        return (&s[..idx]).to_string();
+    }
+    s.to_string()
+}
+
 fn main() -> std::io::Result<()> {
     let args = ServerOpts::from_args();
-    flexi_logger::Logger::with_env_or_str("hyperg=debug,actix_web::middleware::logger=info")
-        .start()
-        .unwrap();
+    let log_builder = flexi_logger::Logger::with_env_or_str(log_string_for_level(&args.loglevel));
+
+    if let Some(logfile) = &args.logfile {
+        let logfile = logfile as &Path;
+
+        let log_builder = if logfile.is_dir() || logfile.ends_with("") {
+            log_builder.directory(logfile)
+        } else {
+            eprintln!("logfile={}", logfile.display());
+            match (logfile.file_name(), logfile.parent()) {
+                (Some(file_name), Some(dir_name)) if dir_name.is_dir() => {
+                    log_builder.directory(dir_name).create_symlink(logfile)
+                }
+                _ => log_builder.create_symlink(logfile),
+            }
+        };
+        log_builder
+            .log_to_file()
+            .duplicate_to_stderr(Duplicate::Info)
+            .start()
+            .unwrap();
+    } else {
+        log_builder.start().unwrap();
+    }
 
     let sys = actix::System::new("hyperg");
 
