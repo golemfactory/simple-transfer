@@ -136,6 +136,10 @@ impl Hello {
     }
 }
 
+impl Message for Hello {
+    type Result = Result<(), super::error::Error>;
+}
+
 #[derive(Default, Serialize, Deserialize)]
 pub struct Ask {
     pub hash: u128,

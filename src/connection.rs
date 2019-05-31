@@ -34,13 +34,7 @@ pub struct Connection {
 impl Actor for Connection {
     type Context = Context<Self>;
 
-    fn started(&mut self, ctx: &mut Self::Context) {
-        let f = self.send_hello(ctx).map_err(|e, _, ctx| {
-            log::error!("failed to get id: {}", e);
-            ctx.stop()
-        });
-        ctx.spawn(f);
-    }
+    fn started(&mut self, ctx: &mut Self::Context) {}
 }
 
 impl Connection {
@@ -48,8 +42,9 @@ impl Connection {
         db: Addr<DatabaseManager>,
         tcp_stream: TcpStream,
         peer_addr: net::SocketAddr,
-    ) -> Addr<Connection> {
-        Connection::create(move |ctx| {
+    ) -> impl Future<Item = Addr<Connection>, Error = Error> {
+        let id_fut = database::id(&db);
+        let addr: Addr<Connection> = Connection::create(move |ctx| {
             let (r, w) = tcp_stream.split();
             let framed = actix::io::FramedWrite::new(w, StCodec::default(), ctx);
             Connection::add_stream(FramedRead::new(r, StCodec::default()), ctx);
@@ -62,6 +57,12 @@ impl Connection {
                 block_requests: HashMap::new(),
                 ask_requests: HashMap::new(),
             }
+        });
+
+        id_fut.and_then(move |id| {
+            addr.send(crate::codec::Hello::new(id))
+                .flatten()
+                .and_then(move |()| Ok(addr))
         })
     }
 
@@ -181,17 +182,24 @@ impl Connection {
         ));
     }
 
-    fn handle_block(&mut self, b : Block, ctx: &mut <Self as Actor>::Context) {
+    fn handle_block(&mut self, b: Block, ctx: &mut <Self as Actor>::Context) {
         let get_block = GetBlock {
             hash: b.hash,
             file_nr: b.file_nr,
-            block_nr: b.block_nr
+            block_nr: b.block_nr,
         };
         if let Some(r) = self.block_requests.remove(&get_block) {
             let _ = r.send(b);
-        }
-        else {
+        } else {
             log::error!("response for not requested block");
+        }
+    }
+
+    fn handle_ask_reply(&mut self, b: AskReply, ctx: &mut <Self as Actor>::Context) {
+        if let Some(h) = self.ask_requests.remove(&b.hash) {
+            let _ = h.send(b);
+        } else {
+            log::warn!("unexpected ask reply");
         }
     }
 }
@@ -238,10 +246,15 @@ impl StreamHandler<StCommand, io::Error> for Connection {
                     self.handle_ask(hash, ctx)
                 }
             }
+            StCommand::AskReply(r) => self.handle_ask_reply(r, ctx),
             StCommand::GetBlock(b) => self.handle_get_block(b, ctx),
-            StCommand::Block(b) => self.handle_block(b ,ctx),
+            StCommand::Block(b) => self.handle_block(b, ctx),
             p => {
-                log::error!("unexpected packet from: {}", self.peer_addr);
+                log::error!(
+                    "unexpected packet from: {}, {}",
+                    self.peer_addr,
+                    p.display()
+                );
                 ctx.stop()
             }
         }
@@ -271,10 +284,18 @@ impl Handler<crate::codec::GetBlock> for Connection {
         let (rx, tx) = oneshot::channel();
         if let Some(prev) = self.block_requests.insert(msg.clone(), rx) {
             log::error!("duplicate get");
-        }
-        else {
+        } else {
             self.framed.write(StCommand::GetBlock(msg))
         }
         ActorResponse::r#async(tx.from_err().into_actor(self))
+    }
+}
+
+impl Handler<crate::codec::Hello> for Connection {
+    type Result = Result<(), Error>;
+
+    fn handle(&mut self, msg: crate::codec::Hello, ctx: &mut Self::Context) -> Self::Result {
+        self.framed.write(StCommand::hello(msg.node_id));
+        Ok(())
     }
 }

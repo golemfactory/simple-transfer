@@ -3,7 +3,6 @@ use crate::connection::Connection;
 use crate::database::DatabaseManager;
 use crate::error::Error;
 use crate::filemap::FileMap;
-use crate::flatten::*;
 use actix::prelude::*;
 use futures::prelude::*;
 use std::{io, net};
@@ -18,7 +17,7 @@ pub fn connect(
 ) -> impl Future<Item = Addr<Connection>, Error = Error> {
     TcpStream::connect(&addr)
         .from_err()
-        .and_then(move |c| Ok(Connection::new(db, c, addr)))
+        .and_then(move |c| Connection::new(db, c, addr))
 }
 
 pub fn find_peer(
@@ -31,7 +30,7 @@ pub fn find_peer(
         connect(db.clone(), addr).and_then(move |connection| {
             connection
                 .send(Ask::new(hash))
-                .flatten_fut()
+                .flatten()
                 .and_then(move |reply: AskReply| match reply.files {
                     Some(files) => Ok((connection, files)),
                     None => Err(Error::ResourceNotFound(reply.hash)),
