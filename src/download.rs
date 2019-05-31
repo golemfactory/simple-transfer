@@ -1,5 +1,5 @@
 use crate::codec::{Ask, AskReply};
-use crate::connection::Connection;
+use crate::connection::{Connection, ConnectionRef};
 use crate::database::DatabaseManager;
 use crate::error::Error;
 use crate::filemap::FileMap;
@@ -12,17 +12,17 @@ use tokio_tcp::TcpStream;
 pub fn connect(
     db: Addr<DatabaseManager>,
     addr: net::SocketAddr,
-) -> impl Future<Item = Addr<Connection>, Error = Error> {
+) -> impl Future<Item = ConnectionRef, Error = Error> {
     TcpStream::connect(&addr)
         .from_err()
-        .and_then(move |c| Connection::new(db, c, addr))
+        .and_then(move |c| Connection::new_managed(db, c, addr))
 }
 
 pub fn find_peer(
     hash: u128,
     db: Addr<DatabaseManager>,
     addr: Vec<net::SocketAddr>,
-) -> impl Future<Item = (Addr<Connection>, Vec<FileMap>), Error = Error> {
+) -> impl Future<Item = (ConnectionRef, Vec<FileMap>), Error = Error> {
     let connections = addr.into_iter().map(move |addr| {
         let hash = hash;
         connect(db.clone(), addr).and_then(move |connection| {

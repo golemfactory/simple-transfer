@@ -25,6 +25,7 @@ pub enum Op {
     AskReply = 3,
     GetBlock = 4,
     Block = 5,
+    Bye = 6,
 }
 
 pub enum StCommand {
@@ -34,6 +35,7 @@ pub enum StCommand {
     AskReply(AskReply),
     GetBlock(GetBlock),
     Block(Block),
+    Bye,
 }
 
 impl StCommand {
@@ -68,6 +70,7 @@ impl StCommand {
                 "[block hash:{}, file-no:{}, block-no:{}]",
                 b.hash, b.file_nr, b.block_nr
             ),
+            StCommand::Bye => format!("[bye]"),
         }
     }
 }
@@ -81,6 +84,7 @@ impl StCommand {
             Op::AskReply => StCommand::AskReply(bincode::deserialize(buf)?),
             Op::GetBlock => StCommand::GetBlock(bincode::deserialize(buf)?),
             Op::Block => StCommand::Block(bincode::deserialize(buf)?),
+            Op::Bye => StCommand::Bye,
         })
     }
 }
@@ -94,6 +98,7 @@ impl Op {
             Op::AskReply => None,
             Op::GetBlock => None,
             Op::Block => None,
+            Op::Bye => Some(0),
         }
     }
 }
@@ -109,6 +114,7 @@ impl TryFrom<u8> for Op {
             3 => Ok(Op::AskReply),
             4 => Ok(Op::GetBlock),
             5 => Ok(Op::Block),
+            6 => Ok(Op::Bye),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unknown packet opcode",
@@ -137,6 +143,18 @@ impl Hello {
 }
 
 impl Message for Hello {
+    type Result = Result<(), super::error::Error>;
+}
+
+pub struct Bye {}
+
+impl Bye {
+    pub fn new() -> Self {
+        Bye {}
+    }
+}
+
+impl Message for Bye {
     type Result = Result<(), super::error::Error>;
 }
 
@@ -239,6 +257,7 @@ impl Encoder for StCodec {
     fn encode(&mut self, msg: StCommand, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let (op, prefix_size, size) = match &msg {
             StCommand::Nop => (Op::Nop, 0usize, 0usize),
+            StCommand::Bye => (Op::Bye, 0usize, 0usize),
             StCommand::Hello(..) => (Op::Hello, 0, 17),
             StCommand::Ask(..) => (Op::Ask, 0, 16),
             StCommand::AskReply(reply) => (
@@ -267,6 +286,7 @@ impl Encoder for StCodec {
         }
         match msg {
             StCommand::Nop => Ok(()),
+            StCommand::Bye => Ok(()),
             StCommand::Hello(hello) => put_into_buf(size, dst, &hello),
             StCommand::Ask(ask) => put_into_buf(size, dst, &ask),
             StCommand::AskReply(ask_reply) => put_into_buf(size, dst, &ask_reply),

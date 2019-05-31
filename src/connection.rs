@@ -13,15 +13,21 @@ use std::cmp::min;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
+use std::ops::Deref;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use std::{io, net};
 use tokio_codec::FramedRead;
 use tokio_io::io::WriteHalf;
 use tokio_io::AsyncRead;
 use tokio_tcp::TcpStream;
 
+static CONNECTION_IDS: AtomicUsize = AtomicUsize::new(0);
+
 pub struct Connection {
+    connection_id: usize,
     db: Addr<DatabaseManager>,
     peer_addr: net::SocketAddr,
     framed: actix::io::FramedWrite<WriteHalf<TcpStream>, StCodec>,
@@ -31,6 +37,16 @@ pub struct Connection {
     ask_requests: HashMap<u128, oneshot::Sender<AskReply>>,
 }
 
+impl Drop for Connection {
+    fn drop(&mut self) {
+        log::debug!(
+            "closed connection id={}, peer={}",
+            self.connection_id,
+            self.peer_addr
+        );
+    }
+}
+
 impl Actor for Connection {
     type Context = Context<Self>;
 
@@ -38,17 +54,20 @@ impl Actor for Connection {
 }
 
 impl Connection {
-    pub fn new(
+    fn new_addr(
         db: Addr<DatabaseManager>,
         tcp_stream: TcpStream,
         peer_addr: net::SocketAddr,
-    ) -> impl Future<Item = Addr<Connection>, Error = Error> {
-        let id_fut = database::id(&db);
+    ) -> Addr<Connection> {
+        let connection_id = CONNECTION_IDS.fetch_add(1, Ordering::SeqCst);
         let addr: Addr<Connection> = Connection::create(move |ctx| {
             let (r, w) = tcp_stream.split();
             let framed = actix::io::FramedWrite::new(w, StCodec::default(), ctx);
+            log::debug!("opened connection id={}, peer={}", connection_id, peer_addr);
+
             Connection::add_stream(FramedRead::new(r, StCodec::default()), ctx);
             Connection {
+                connection_id,
                 db,
                 framed,
                 peer_addr,
@@ -58,6 +77,32 @@ impl Connection {
                 ask_requests: HashMap::new(),
             }
         });
+
+        addr
+    }
+
+    pub fn new(
+        db: Addr<DatabaseManager>,
+        tcp_stream: TcpStream,
+        peer_addr: net::SocketAddr,
+    ) -> impl Future<Item = Addr<Connection>, Error = Error> {
+        let id_fut = database::id(&db);
+        let addr = Self::new_addr(db, tcp_stream, peer_addr);
+
+        id_fut.and_then(move |id| {
+            addr.send(crate::codec::Hello::new(id))
+                .flatten()
+                .and_then(move |()| Ok(addr))
+        })
+    }
+
+    pub fn new_managed(
+        db: Addr<DatabaseManager>,
+        tcp_stream: TcpStream,
+        peer_addr: net::SocketAddr,
+    ) -> impl Future<Item = ConnectionRef, Error = Error> {
+        let id_fut = database::id(&db);
+        let addr = ConnectionRef(Self::new_addr(db, tcp_stream, peer_addr));
 
         id_fut.and_then(move |id| {
             addr.send(crate::codec::Hello::new(id))
@@ -255,6 +300,11 @@ impl StreamHandler<StCommand, io::Error> for Connection {
     fn handle(&mut self, item: StCommand, ctx: &mut Self::Context) {
         log::debug!("incomming packet={}", item.display());
         match item {
+            StCommand::Nop => (),
+            StCommand::Bye => {
+                log::info!("disconnect from: {}", self.peer_addr);
+                ctx.stop()
+            }
             StCommand::Hello(h) => self.peer_id = Some(h.node_id),
             StCommand::Ask(hash) => {
                 if self.peer_id.is_none() {
@@ -315,5 +365,37 @@ impl Handler<crate::codec::Hello> for Connection {
     fn handle(&mut self, msg: crate::codec::Hello, _ctx: &mut Self::Context) -> Self::Result {
         self.framed.write(StCommand::hello(msg.node_id));
         Ok(())
+    }
+}
+
+impl Handler<crate::codec::Bye> for Connection {
+    type Result = Result<(), Error>;
+
+    fn handle(
+        &mut self,
+        msg: crate::codec::Bye,
+        ctx: &mut <Self as Actor>::Context,
+    ) -> Self::Result {
+        self.framed.write(StCommand::Bye);
+        ctx.run_later(Duration::from_secs(5), |_, ctx| {
+            ctx.stop();
+        });
+        Ok(())
+    }
+}
+
+pub struct ConnectionRef(Addr<Connection>);
+
+impl Deref for ConnectionRef {
+    type Target = Addr<Connection>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for ConnectionRef {
+    fn drop(&mut self) {
+        self.0.do_send(crate::codec::Bye::new());
     }
 }

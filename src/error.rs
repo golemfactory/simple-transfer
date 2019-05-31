@@ -23,6 +23,8 @@ pub enum Error {
     RequestCanceled(#[cause] futures::Canceled),
     #[fail(display = "resource {:032x} not found", _0)]
     ResourceNotFound(u128),
+    #[fail(display = "invalid block hash {:032x}", _0)]
+    InvalidBlockHash(u128),
 }
 
 macro_rules! convert {

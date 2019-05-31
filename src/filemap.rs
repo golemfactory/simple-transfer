@@ -82,6 +82,12 @@ pub fn hash_bundles(maps: impl IntoIterator<Item = impl Borrow<FileMap>>) -> u12
     extract_results(digest)
 }
 
+pub fn hash_block(block: &[u8]) -> u128 {
+    let mut digest = sha2::Sha224::new();
+    digest.input(block);
+    extract_results(digest)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

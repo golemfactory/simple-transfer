@@ -3,7 +3,7 @@ use crate::command::{DownloadResult, PeerInfo, UploadResult};
 use crate::connection::Connection;
 use crate::database::{DatabaseManager, RegisterHash};
 use crate::download::find_peer;
-use crate::filemap::FileMap;
+use crate::filemap::{hash_block, hash_bundles, FileMap};
 use actix::Addr;
 use actix_web::middleware::Logger;
 use actix_web::{post, web, App, HttpResponse, HttpServer};
@@ -178,45 +178,53 @@ impl State {
             .collect();
 
         find_peer(hash, self.db.clone(), peers.into_iter().collect())
-            .and_then(
-                move |(connection, file_map): (Addr<Connection>, Vec<FileMap>)| {
-                    use futures::prelude::*;
+            .and_then(move |(connection, file_map): (_, Vec<FileMap>)| {
+                use futures::prelude::*;
 
-                    futures::stream::iter_ok(file_map.into_iter().enumerate())
-                        .and_then(move |(file_no, file_map)| {
-                            let file_name = file_map.file_name;
-                            let hash = hash;
-                            let out_path = dest.join(file_name);
-                            let connection = connection.clone();
+                futures::stream::iter_ok(file_map.into_iter().enumerate())
+                    .and_then(move |(file_no, file_map)| {
+                        let hash = hash;
+                        let out_path = dest.join(&file_map.file_name);
+                        let connection = connection.clone();
 
-                            let mut out_file = std::fs::OpenOptions::new()
-                                .write(true)
-                                .create_new(true)
-                                .open(&out_path)
-                                .unwrap();
-
-                            futures::stream::iter_ok(file_map.blocks.into_iter().enumerate())
-                                .and_then(move |(block_no, _block_hash)| {
-                                    connection
-                                        .send(GetBlock {
-                                            hash,
-                                            file_nr: file_no as u32,
-                                            block_nr: block_no as u32,
-                                        })
-                                        .flatten()
-                                })
-                                .for_each(move |b: Block| {
-                                    out_file.write_all(b.bytes.as_slice()).unwrap();
-                                    Ok(())
-                                })
-                                .and_then(|()| Ok(out_path))
-                        })
-                        .collect()
-                        .and_then(|files| {
-                            Ok(HttpResponse::Ok().json(DownloadResult { files: files }))
-                        })
-                },
-            )
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&out_path)
+                            .into_future()
+                            .from_err()
+                            .and_then(move |mut out_file| {
+                                futures::stream::iter_ok(file_map.blocks.into_iter().enumerate())
+                                    .and_then(move |(block_no, block_hash_val)| {
+                                        connection
+                                            .send(GetBlock {
+                                                hash,
+                                                file_nr: file_no as u32,
+                                                block_nr: block_no as u32,
+                                            })
+                                            .flatten()
+                                            .and_then(move |b| {
+                                                let block_hash_calc =
+                                                    hash_block(b.bytes.as_slice());
+                                                if block_hash_calc == block_hash_val {
+                                                    Ok(b)
+                                                } else {
+                                                    Err(crate::error::Error::InvalidBlockHash(
+                                                        block_hash_calc,
+                                                    ))
+                                                }
+                                            })
+                                    })
+                                    .for_each(move |b: Block| {
+                                        out_file.write_all(b.bytes.as_slice()).unwrap();
+                                        Ok(())
+                                    })
+                                    .and_then(|()| Ok(out_path))
+                            })
+                    })
+                    .collect()
+                    .and_then(|files| Ok(HttpResponse::Ok().json(DownloadResult { files: files })))
+            })
             .map_err(|e| actix_web::error::ErrorInternalServerError(e))
     }
 }
@@ -263,14 +271,6 @@ fn log_string_for_level(level: &Level) -> &'static str {
         Level::Trace => "hyperg=trace,info",
         Level::Warn => "hyperg=info,warn",
     }
-}
-
-fn base_name(file_name: &OsStr) -> String {
-    let s = file_name.to_string_lossy();
-    if let Some(idx) = s.find(".") {
-        return (&s[..idx]).to_string();
-    }
-    s.to_string()
 }
 
 fn main() -> std::io::Result<()> {
