@@ -32,6 +32,7 @@ mod server;
 
 /// Simple resource transfer server for Golem Brass Network.
 #[derive(StructOpt, Clone)]
+#[structopt(raw(global_setting = "structopt::clap::AppSettings::DisableVersion"))]
 struct ServerOpts {
     /// Database path
     #[structopt(long)]
@@ -68,6 +69,10 @@ struct ServerOpts {
     /// Set the default logging level
     #[structopt(long, default_value = "info")]
     loglevel: log::Level,
+
+    /// Prints version information
+    #[structopt(long, short)]
+    version : bool,
 }
 
 struct State {
@@ -75,12 +80,15 @@ struct State {
     opts: Arc<ServerOpts>,
 }
 
+const APP_VERSION : &str = env!("CARGO_PKG_VERSION");
+
+
 impl State {
     fn id(&self) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
         database::id(&self.db)
             .and_then(|id| {
                 let id = crate::codec::hash_to_hex(id);
-                let version = env!("CARGO_PKG_VERSION").into();
+                let version = APP_VERSION.into();
                 Ok(HttpResponse::Ok().json(command::IdResult { id, version }))
             })
             .map_err(|e| actix_web::error::ErrorInternalServerError(e))
@@ -275,6 +283,12 @@ fn log_string_for_level(level: &Level) -> &'static str {
 
 fn main() -> std::io::Result<()> {
     let args = ServerOpts::from_args();
+
+    if args.version {
+        println!("{}", APP_VERSION);
+        return Ok(())
+    }
+
     let log_builder = flexi_logger::Logger::with_env_or_str(log_string_for_level(&args.loglevel));
 
     if let Some(logfile) = &args.logfile {
