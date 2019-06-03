@@ -1,12 +1,11 @@
 use crate::filemap::FileMap;
 use actix::Message;
-use bytes::{Buf, BufMut, ByteOrder, BytesMut, LittleEndian};
+use bytes::{BufMut, ByteOrder, BytesMut, LittleEndian};
 
 use serde::{Deserialize, Serialize};
 use std::convert::{TryFrom, TryInto};
 use std::fmt::Display;
 use std::io;
-use std::io::prelude::*;
 use tokio_io::codec::{Decoder, Encoder};
 
 const PROTO_VERSION: u8 = 1;

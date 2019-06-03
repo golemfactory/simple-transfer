@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use crate::codec::{Ask, AskReply};
 use crate::connection::{Connection, ConnectionRef};
 use crate::database::DatabaseManager;

@@ -17,8 +17,6 @@ pub enum Error {
     ServiceFail(&'static str),
     #[fail(display = "{}", _0)]
     Mailbox(actix::MailboxError),
-    #[fail(display = "{}", _0)]
-    ProtoError(String),
     #[fail(display = "request canceled {}", _0)]
     RequestCanceled(#[cause] futures::Canceled),
     #[fail(display = "resource {:032x} not found", _0)]
