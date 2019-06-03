@@ -1,6 +1,5 @@
 use crate::codec::{hash_to_hex, Block, GetBlock};
 use crate::command::{DownloadResult, PeerInfo, UploadResult};
-use crate::connection::Connection;
 use crate::database::{DatabaseManager, RegisterHash};
 use crate::download::find_peer;
 use crate::filemap::{hash_block, hash_bundles, FileMap};
@@ -9,19 +8,18 @@ use actix_web::middleware::Logger;
 use actix_web::{post, web, App, HttpResponse, HttpServer};
 use futures::{future, prelude::*};
 
+use crate::error::Error;
 use flexi_logger::Duplicate;
 use log::Level;
 use std::collections::HashSet;
-use std::ffi::OsStr;
 use std::io::Write;
-use std::net::{self, IpAddr, SocketAddr, Ipv4Addr};
+use std::net::{self, IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 use structopt::StructOpt;
 use tokio_reactor::Handle;
 use tokio_tcp::TcpListener;
-use crate::error::Error;
-use std::str::FromStr;
 
 mod codec;
 mod command;
@@ -41,7 +39,7 @@ struct ServerOpts {
     db: Option<PathBuf>,
 
     /// IP address to listen on
-    #[structopt(long, default_value = "0.0.0.0")]
+    #[structopt(long, default_value = "0.0.0.0", parse(try_from_str = "resolve_host"))]
     host: IpAddr,
 
     /// TCP port to listen on
@@ -49,7 +47,11 @@ struct ServerOpts {
     port: u16,
 
     /// IP address for RPC to listen on
-    #[structopt(long, default_value = "127.0.0.1", parse(try_from_str = "resolve_host"))]
+    #[structopt(
+        long,
+        default_value = "127.0.0.1",
+        parse(try_from_str = "resolve_host")
+    )]
     rpc_host: IpAddr,
 
     /// TCP port for RPC to listen on
@@ -74,7 +76,7 @@ struct ServerOpts {
 
     /// Prints version information
     #[structopt(long, short)]
-    version : bool,
+    version: bool,
 }
 
 struct State {
@@ -82,18 +84,16 @@ struct State {
     opts: Arc<ServerOpts>,
 }
 
-
 fn resolve_host(src: &str) -> Result<IpAddr, <IpAddr as FromStr>::Err> {
     use std::net::IpAddr;
 
     match src {
         "localhost" => Ok(Ipv4Addr::LOCALHOST.into()),
-        _ => src.parse()
+        _ => src.parse(),
     }
 }
 
-const APP_VERSION : &str = env!("CARGO_PKG_VERSION");
-
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl State {
     fn id(&self) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
@@ -188,8 +188,11 @@ impl State {
         peers: Vec<PeerInfo>,
         _timeout: Option<f64>,
     ) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
-        eprintln!("parsing hash={}", hash);
-        let hash = u128::from_str_radix(&hash, 16).unwrap();
+        let hash = match u128::from_str_radix(&hash, 16) {
+            Err(e) => return future::Either::B(future::err(actix_web::error::ErrorBadRequest(e))),
+            Ok(hash) => hash,
+        };
+
         let peers: HashSet<_> = peers
             .into_iter()
             .map(|peer_info| match peer_info {
@@ -197,24 +200,27 @@ impl State {
             })
             .collect();
 
-        find_peer(hash, self.db.clone(), peers.into_iter().collect())
-            .and_then(move |(connection, file_map): (_, Vec<FileMap>)| {
-                use futures::prelude::*;
+        future::Either::A(
+            find_peer(hash, self.db.clone(), peers.into_iter().collect())
+                .and_then(move |(connection, file_map): (_, Vec<FileMap>)| {
+                    use futures::prelude::*;
 
-                futures::stream::iter_ok(file_map.into_iter().enumerate())
-                    .and_then(move |(file_no, file_map)| {
-                        let hash = hash;
-                        let out_path = dest.join(&file_map.file_name);
-                        let connection = connection.clone();
+                    futures::stream::iter_ok(file_map.into_iter().enumerate())
+                        .and_then(move |(file_no, file_map)| {
+                            let hash = hash;
+                            let out_path = dest.join(&file_map.file_name);
+                            let connection = connection.clone();
 
-                        std::fs::OpenOptions::new()
-                            .write(true)
-                            .create_new(true)
-                            .open(&out_path)
-                            .into_future()
-                            .from_err()
-                            .and_then(move |mut out_file| {
-                                futures::stream::iter_ok(file_map.blocks.into_iter().enumerate())
+                            std::fs::OpenOptions::new()
+                                .write(true)
+                                .create_new(true)
+                                .open(&out_path)
+                                .into_future()
+                                .from_err()
+                                .and_then(move |mut out_file| {
+                                    futures::stream::iter_ok(
+                                        file_map.blocks.into_iter().enumerate(),
+                                    )
                                     .and_then(move |(block_no, block_hash_val)| {
                                         connection
                                             .send(GetBlock {
@@ -240,12 +246,15 @@ impl State {
                                         Ok(())
                                     })
                                     .and_then(|()| Ok(out_path))
-                            })
-                    })
-                    .collect()
-                    .and_then(|files| Ok(HttpResponse::Ok().json(DownloadResult { files: files })))
-            })
-            .map_err(|e| actix_web::error::ErrorInternalServerError(e))
+                                })
+                        })
+                        .collect()
+                        .and_then(|files| {
+                            Ok(HttpResponse::Ok().json(DownloadResult { files: files }))
+                        })
+                })
+                .map_err(|e| actix_web::error::ErrorInternalServerError(e)),
+        )
     }
 }
 
@@ -298,7 +307,7 @@ fn main() -> std::io::Result<()> {
 
     if args.version {
         println!("{}", APP_VERSION);
-        return Ok(())
+        return Ok(());
     }
 
     let log_builder = flexi_logger::Logger::with_env_or_str(log_string_for_level(&args.loglevel));
