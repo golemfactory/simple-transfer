@@ -2,13 +2,12 @@ use crate::codec::{hash_to_hex, Block, GetBlock};
 use crate::command::{DownloadResult, PeerInfo, UploadResult};
 use crate::database::{DatabaseManager, RegisterHash};
 use crate::download::find_peer;
-use crate::filemap::{hash_block, hash_bundles, FileMap};
+use crate::filemap::{hash_block, FileMap};
 use actix::Addr;
 use actix_web::middleware::Logger;
 use actix_web::{post, web, App, HttpResponse, HttpServer};
 use futures::{future, prelude::*};
 
-use crate::error::Error;
 use flexi_logger::Duplicate;
 use log::Level;
 use std::collections::HashSet;
@@ -17,6 +16,7 @@ use std::net::{self, IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use structopt::StructOpt;
 use tokio_reactor::Handle;
 use tokio_tcp::TcpListener;
@@ -85,8 +85,6 @@ struct State {
 }
 
 fn resolve_host(src: &str) -> Result<IpAddr, <IpAddr as FromStr>::Err> {
-    use std::net::IpAddr;
-
     match src {
         "localhost" => Ok(Ipv4Addr::LOCALHOST.into()),
         _ => src.parse(),
@@ -228,6 +226,8 @@ impl State {
                                                 file_nr: file_no as u32,
                                                 block_nr: block_no as u32,
                                             })
+                                            // min 110Kb/s
+                                            .timeout(Duration::from_secs(300))
                                             .flatten()
                                             .and_then(move |b| {
                                                 let block_hash_calc =
@@ -320,7 +320,7 @@ fn main() -> std::io::Result<()> {
         } else {
             eprintln!("logfile={}", logfile.display());
             match (logfile.file_name(), logfile.parent()) {
-                (Some(file_name), Some(dir_name)) if dir_name.is_dir() => {
+                (Some(_file_name), Some(dir_name)) if dir_name.is_dir() => {
                     log_builder.directory(dir_name).create_symlink(logfile)
                 }
                 _ => log_builder.create_symlink(logfile),

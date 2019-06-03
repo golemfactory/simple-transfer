@@ -234,6 +234,9 @@ impl Decoder for StCodec {
                 |e| io::Error::new(io::ErrorKind::InvalidData, e),
             )?))
         } else {
+            if src.capacity() < size + prefix_size + 1 {
+                src.reserve(size + prefix_size + 1 - src.len())
+            }
             Ok(None)
         }
     }

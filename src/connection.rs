@@ -26,6 +26,8 @@ use tokio_tcp::TcpStream;
 
 static CONNECTION_IDS: AtomicUsize = AtomicUsize::new(0);
 
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub struct Connection {
     connection_id: usize,
     db: Addr<DatabaseManager>,
@@ -50,7 +52,14 @@ impl Drop for Connection {
 impl Actor for Connection {
     type Context = Context<Self>;
 
-    fn started(&mut self, _ctx: &mut Self::Context) {}
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.run_later(HANDSHAKE_TIMEOUT, |act, ctx| {
+            if act.peer_id.is_none() {
+                log::error!("identification timeout for {}", act.peer_addr);
+                ctx.stop();
+            }
+        });
+    }
 }
 
 impl Connection {
@@ -109,17 +118,6 @@ impl Connection {
                 .flatten()
                 .and_then(move |()| Ok(addr))
         })
-    }
-
-    fn send_hello(
-        &mut self,
-        _ctx: &mut <Self as Actor>::Context,
-    ) -> impl ActorFuture<Actor = Self, Item = (), Error = Error> {
-        database::id(&self.db)
-            .into_actor(self)
-            .and_then(|id, act: &mut Connection, _ctx| {
-                fut::ok(act.framed.write(StCommand::hello(id)))
-            })
     }
 
     fn send_ask_reply(&mut self, file_desc: FileDesc, _ctx: &mut <Self as Actor>::Context) {
@@ -305,7 +303,14 @@ impl StreamHandler<StCommand, io::Error> for Connection {
                 log::info!("disconnect from: {}", self.peer_addr);
                 ctx.stop()
             }
-            StCommand::Hello(h) => self.peer_id = Some(h.node_id),
+            StCommand::Hello(h) => {
+                if h.is_valid() {
+                    self.peer_id = Some(h.node_id);
+                } else {
+                    log::error!("invalid handshake from: {}", self.peer_addr);
+                    ctx.stop()
+                }
+            }
             StCommand::Ask(hash) => {
                 if self.peer_id.is_none() {
                     log::error!("ask without handshake, disconnect");
@@ -317,14 +322,6 @@ impl StreamHandler<StCommand, io::Error> for Connection {
             StCommand::AskReply(r) => self.handle_ask_reply(r, ctx),
             StCommand::GetBlock(b) => self.handle_get_block(b, ctx),
             StCommand::Block(b) => self.handle_block(b, ctx),
-            p => {
-                log::error!(
-                    "unexpected packet from: {}, {}",
-                    self.peer_addr,
-                    p.display()
-                );
-                ctx.stop()
-            }
         }
     }
 }
@@ -373,7 +370,7 @@ impl Handler<crate::codec::Bye> for Connection {
 
     fn handle(
         &mut self,
-        msg: crate::codec::Bye,
+        _msg: crate::codec::Bye,
         ctx: &mut <Self as Actor>::Context,
     ) -> Self::Result {
         self.framed.write(StCommand::Bye);
