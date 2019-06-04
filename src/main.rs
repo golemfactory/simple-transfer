@@ -11,6 +11,7 @@ use futures::{future, prelude::*};
 use flexi_logger::Duplicate;
 use log::Level;
 use std::collections::HashSet;
+use std::fs;
 use std::io::Write;
 use std::net::{self, IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -256,6 +257,48 @@ impl State {
                 .map_err(|e| actix_web::error::ErrorInternalServerError(e)),
         )
     }
+
+    fn mimic_download(
+        &self,
+        hash: String,
+        dest: PathBuf,
+    ) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
+        let hash = match u128::from_str_radix(&hash, 16) {
+            Err(e) => return future::Either::B(future::err(actix_web::error::ErrorBadRequest(e))),
+            Ok(hash) => hash,
+        };
+
+        let db = self.db.clone();
+        future::Either::A(
+            db.send(database::GetHash(hash))
+                .flatten()
+                .map_err(|e| actix_web::error::ErrorInternalServerError(e))
+                .and_then(|o: Option<Arc<database::FileDesc>>| {
+                    o.ok_or(actix_web::error::ErrorBadRequest("hash not found"))
+                        .into_future()
+                        .from_err()
+                        .and_then(|desc| {
+                            futures::stream::iter_ok(desc.files.to_vec().into_iter().enumerate())
+                                .and_then(move |(_, (file_map, path_buf))| {
+                                    let out_path = dest.join(&file_map.file_name);
+
+                                    if let Some(parent) = out_path.parent() {
+                                        // Copy fails either way if the parent path does not exist
+                                        let _ = fs::create_dir_all(parent);
+                                    }
+
+                                    fs::copy(path_buf, out_path.clone())
+                                        .into_future()
+                                        .map_err(|e| actix_web::error::ErrorInternalServerError(e))
+                                        .and_then(|_| Ok(out_path))
+                                })
+                                .collect()
+                        })
+                        .and_then(|files| Ok(HttpResponse::Ok().json(DownloadResult { files })))
+                })
+                .map_err(|e| actix_web::error::ErrorInternalServerError(e)),
+        )
+    }
 }
 
 #[post("/api")]
@@ -282,7 +325,15 @@ fn api(
             dest,
             peers,
             timeout,
-        } => Box::new(state.download(hash, dest, peers, timeout)),
+        } => {
+            if peers.len() == 0 {
+                // Legacy HyperG behaviour:
+                // If no peers were provided, mimic the download process by copying locally stored files
+                Box::new(state.mimic_download(hash, dest))
+            } else {
+                Box::new(state.download(hash, dest, peers, timeout))
+            }
+        }
         other_command => {
             log::warn!("bad command: {:?}", other_command);
             Box::new(future::err(actix_web::error::ErrorBadRequest(format!(
