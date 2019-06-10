@@ -91,7 +91,9 @@ pub fn hash_block(block: &[u8]) -> u128 {
 #[cfg(test)]
 mod test {
     use super::*;
-    #[test]
+
+    // no run
+    //    #[test]
     fn test_hash_file() {
         let m = hash_file(
             "/home/prekucki/Downloads/swift-5.0-RELEASE-ubuntu18.04.tar.gz",

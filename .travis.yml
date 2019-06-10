@@ -13,6 +13,8 @@ addons:
     - musl-tools
 cache: cargo
 dist: xenial
+matrix:
+        fast_finish: true
 before_cache:
 - rm -rf /home/travis/.cargo/registry
 before_script:
