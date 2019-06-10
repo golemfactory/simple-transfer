@@ -17,7 +17,7 @@ use std::net::{self, IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use structopt::StructOpt;
 use tokio_reactor::Handle;
 use tokio_tcp::TcpListener;
@@ -117,6 +117,7 @@ impl State {
     fn upload(
         &self,
         files: impl IntoIterator<Item = (PathBuf, String)>,
+        _timeout: Option<f64>,
     ) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
         let hashed: Result<Vec<(filemap::FileMap, PathBuf)>, _> = files
             .into_iter()
@@ -139,10 +140,14 @@ impl State {
                 Vec::new()
             };
 
+            // We do not trust timeout value for now.
+            // Keeping file hash for 1day should be good enough.
+            let valid_to = Some(SystemTime::now() + Duration::from_secs(3600 * 24));
+
             future::Either::A(
                 db.send(RegisterHash {
                     files: file_maps,
-                    valid_to: None,
+                    valid_to,
                     inline_data,
                 })
                 .then(|r| match r {
@@ -209,6 +214,11 @@ impl State {
                             let hash = hash;
                             let out_path = dest.join(&file_map.file_name);
                             let connection = connection.clone();
+
+                            if out_path.exists() {
+                                log::warn!("path: {} already exists", out_path.display());
+                                let _ = std::fs::rename(&out_path, out_path.with_extension("bak"));
+                            }
 
                             std::fs::OpenOptions::new()
                                 .write(true)
@@ -314,7 +324,7 @@ fn api(
             files: Some(files),
             timeout,
             hash: None,
-        } => Box::new(state.upload(files)),
+        } => Box::new(state.upload(files, timeout)),
         command::Command::Upload {
             files: None,
             timeout,
@@ -353,6 +363,13 @@ fn log_string_for_level(level: &Level) -> &'static str {
     }
 }
 
+fn is_dir_path(p: &Path) -> bool {
+    p.to_str()
+        .and_then(|s| s.chars().rev().next())
+        .map(|ch| ch == std::path::MAIN_SEPARATOR)
+        .unwrap_or(false)
+}
+
 fn main() -> std::io::Result<()> {
     let args = ServerOpts::from_args();
 
@@ -366,10 +383,9 @@ fn main() -> std::io::Result<()> {
     if let Some(logfile) = &args.logfile {
         let logfile = logfile as &Path;
 
-        let log_builder = if logfile.is_dir() || logfile.ends_with("") {
+        let log_builder = if is_dir_path(logfile) {
             log_builder.directory(logfile)
         } else {
-            eprintln!("logfile={}", logfile.display());
             match (logfile.file_name(), logfile.parent()) {
                 (Some(_file_name), Some(dir_name)) if dir_name.is_dir() => {
                     log_builder.directory(dir_name).create_symlink(logfile)
@@ -381,7 +397,13 @@ fn main() -> std::io::Result<()> {
             .log_to_file()
             .duplicate_to_stderr(Duplicate::Info)
             .start()
-            .unwrap();
+            .unwrap_or_else(|e| {
+                eprintln!("Error {}", e);
+                // fallback to stderr only logger.
+                flexi_logger::Logger::with_env_or_str(log_string_for_level(&args.loglevel))
+                    .start()
+                    .unwrap()
+            });
     } else {
         log_builder.start().unwrap();
     }
