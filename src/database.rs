@@ -98,7 +98,12 @@ impl DatabaseManager {
         let expired_file_hashes: Vec<_> = self
             .files
             .iter()
-            .filter(|(_, v)| v.valid_to.as_ref().map(|valid_to| valid_to < &now).unwrap_or(false))
+            .filter(|(_, v)| {
+                v.valid_to
+                    .as_ref()
+                    .map(|valid_to| valid_to < &now)
+                    .unwrap_or(false)
+            })
             .map(|(&k, _)| k)
             .collect();
 
@@ -225,7 +230,6 @@ impl Handler<RegisterHash> for DatabaseManager {
     }
 }
 
-
 struct Gc;
 
 impl Message for Gc {
@@ -252,6 +256,3 @@ impl Actor for GcWorker {
         });
     }
 }
-
-
-
