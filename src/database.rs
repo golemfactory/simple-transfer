@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use std::{fs, path, time};
 
 /// metadata format
@@ -91,12 +92,35 @@ impl DatabaseManager {
     fn clear_dir(&mut self) -> Result<(), Error> {
         Ok(())
     }
+
+    fn remove_old_resources(&mut self) {
+        let now = SystemTime::now();
+        let expired_file_hashes: Vec<_> = self
+            .files
+            .iter()
+            .filter(|(_, v)| {
+                v.valid_to
+                    .as_ref()
+                    .map(|valid_to| valid_to < &now)
+                    .unwrap_or(false)
+            })
+            .map(|(&k, _)| k)
+            .collect();
+
+        for hash in expired_file_hashes {
+            if let Some(file_desc) = self.files.remove(&hash) {
+                for (_, file_path) in &file_desc.files {
+                    log::info!("unshare {:032x} {}", hash, file_path.display());
+                }
+            }
+        }
+    }
 }
 
 impl Actor for DatabaseManager {
     type Context = SyncContext<Self>;
 
-    fn started(&mut self, _ctx: &mut Self::Context) {
+    fn started(&mut self, _: &mut Self::Context) {
         log::debug!("starting db on {}", self.dir.display());
         match self.load() {
             e @ Err(Error::InvalidMetaVersion { .. })
@@ -113,7 +137,7 @@ impl Actor for DatabaseManager {
             }
             Ok(()) => (),
         }
-        log::info!("db started id=0x{:032x}", self.id.as_ref().unwrap())
+        log::info!("db started id=0x{:032x}", self.id.as_ref().unwrap());
     }
 }
 
@@ -127,7 +151,7 @@ pub fn database_manager(cache_path: &Option<PathBuf>) -> Addr<DatabaseManager> {
         app_dirs::app_dir(app_dirs::AppDataType::UserCache, &APP_INFO, "db").unwrap()
     });
 
-    SyncArbiter::start(1, move || {
+    let addr = SyncArbiter::start(1, move || {
         let man = DatabaseManager {
             dir: dir.clone(),
             files: HashMap::new(),
@@ -135,7 +159,10 @@ pub fn database_manager(cache_path: &Option<PathBuf>) -> Addr<DatabaseManager> {
         };
 
         man
-    })
+    });
+    let _ = GcWorker(addr.clone().recipient()).start();
+
+    addr
 }
 
 struct GetId;
@@ -200,5 +227,32 @@ impl Handler<RegisterHash> for DatabaseManager {
         };
         self.files.insert(map_hash, Arc::new(desc));
         Ok(map_hash)
+    }
+}
+
+struct Gc;
+
+impl Message for Gc {
+    type Result = ();
+}
+
+impl Handler<Gc> for DatabaseManager {
+    type Result = ();
+
+    fn handle(&mut self, _: Gc, _: &mut Self::Context) -> Self::Result {
+        self.remove_old_resources()
+    }
+}
+
+struct GcWorker(Recipient<Gc>);
+
+impl Actor for GcWorker {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        let _ = ctx.run_interval(Duration::from_secs(300), |act, _| {
+            log::debug!("send gc start");
+            let _ = act.0.do_send(Gc);
+        });
     }
 }

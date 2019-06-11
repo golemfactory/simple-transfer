@@ -1,0 +1,71 @@
+language: rust
+os:
+- linux
+- osx
+- windows
+rust:
+- stable
+addons:
+  apt:
+    packages:
+    - musl
+    - musl-dev
+    - musl-tools
+cache: cargo
+dist: xenial
+matrix:
+        fast_finish: true
+before_cache:
+- rm -rf /home/travis/.cargo/registry
+before_script:
+- |
+  if [ -n "$TRAVIS_TAG" ]; then
+          # Prepare for release
+          if [ "$TRAVIS_OS_NAME" = "linux" ]; then
+                  rustup target add x86_64-unknown-linux-musl
+                  OUTPUT_FILE=target/x86_64-unknown-linux-musl/release/hyperg
+                  TARGET_DIR="hyperg_${TRAVIS_TAG}_linux-x64"
+                  DEPLOY_FILE="hyperg_${TRAVIS_TAG}_linux-x64.tar.gz"
+                  CARGO_BUILD_OPTS="--target x86_64-unknown-linux-musl --release"
+          elif [ "$TRAVIS_OS_NAME" = "windows" ]; then
+                  OUTPUT_FILE=target/release/hyperg.exe
+                  TARGET_DIR="hyperg_${TRAVIS_TAG}_windows-x64"
+                  DEPLOY_FILE="hyperg_${TRAVIS_TAG}_windows-x64.zip"
+                  CARGO_BUILD_OPTS="--release"
+          elif [ "$TRAVIS_OS_NAME" = "osx" ]; then
+                  OUTPUT_FILE=target/release/hyperg
+                  TARGET_DIR="hyperg_${TRAVIS_TAG}_darwin-x64"
+                  DEPLOY_FILE="hyperg_${TRAVIS_TAG}_darwin-x64.tar.gz"
+                  CARGO_BUILD_OPTS="--release"
+          fi
+
+  fi
+- rustup component add rustfmt --toolchain stable
+- rustup component list --toolchain stable
+- rustup show
+script:
+- cargo +stable fmt --all -- --check
+- cargo build $CARGO_BUILD_OPTS
+- cargo test --all $CARGO_BUILD_OPTS
+before_deploy: |
+  mkdir -p "releases/$TARGET_DIR"
+  strip "$OUTPUT_FILE"
+  cp "$OUTPUT_FILE" "releases/$TARGET_DIR/"
+  if [ "$TRAVIS_OS_NAME" = "windows" ]; then
+          (cd "releases/$TARGET_DIR" && 7z a "../$DEPLOY_FILE" * )
+  else
+          (cd releases && tar czvf "$DEPLOY_FILE" "$TARGET_DIR")
+  fi
+  echo files:
+  ls -al releases
+deploy:
+  provider: releases
+  api_key:
+    secure: T8VF8lRCiNEMl5fR7wCcEXjtZI+UFA/Nm66BAOaWUxA1pvcyQjuhB0Wu8U/r/GUW7+XjWzTo6jZfMGg0ybTsVs6e0YwFTgaAm8gCBwxbnFvAx2Jb2rA4hlZToA50tGAGfVknGv+2cNhlE9SOnW1TjqCgVGP+g5HSv9l2TAgQtlxkUaSqv4qlnEMF/hn6mie+AtLukHhLl3k8cPq3erLdk0Nqy0z90lyg1nutPwlfcyOCdrd7/7YOXlWBShyLmnE3zhLeAAZSB5EsUSHSiQ6XE1Col20yCUp0iAtqPTzCaeJ1gi0Ov2zkuO8gmtREDzaPEjIn1CmYiVnJFBznHfsJ9bOn2epKlvL2+Y38+V7bmAKQseZobkt0xGJ+BT76dOCCK3Ssp7AAjGNuZMd2S934TmOuC3UyRfPm1ySRJadZAQLHzkplYbpH6lkD7Ofm8svjoIFcg07Tcx09dv4txDvCXWklXbKDmA98Jgkod4Nhw9AWsNy5al+xUelP1JJyHYCI8wZa0KHJaBAHsO8o4kWTOAjHkLhVG0pDeJ22ubDjutQNS0SgkfHnJUMPNdo34HPy0FsejFPwhICdG2yB93yumo1OJul1NQbj026Yi5A1WKKoFLMkPVZefES6PqaBiWZfPNcbzBQSUty/V3xtdeCny9yek10+64e3h/TvLwxY2b8=
+  file_glob: true
+  file: releases/hyperg_*.*
+  skip_cleanup: true
+  on:
+    repo: golemfactory/simple-transfer
+    tags: true
+
