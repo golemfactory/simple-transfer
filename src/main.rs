@@ -141,8 +141,8 @@ impl State {
             };
 
             // We do not trust timeout value for now.
-            // Keeping file hash for 1day should be good enough.
-            let valid_to = Some(SystemTime::now() + Duration::from_secs(3600 * 24));
+            // Keeping file hash for 3 days should be good enough.
+            let valid_to = Some(SystemTime::now() + Duration::from_secs(3600 * 24 * 3));
 
             future::Either::A(
                 db.send(RegisterHash {
