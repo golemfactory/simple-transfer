@@ -253,7 +253,7 @@ impl State {
                                             })
                                     })
                                     .for_each(move |b: Block| {
-                                        out_file.write_all(b.bytes.as_slice()).unwrap();
+                                        out_file.write_all(b.bytes.as_slice())?;
                                         Ok(())
                                     })
                                     .and_then(|()| Ok(out_path))
