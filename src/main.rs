@@ -19,7 +19,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use structopt::StructOpt;
-use tokio_reactor::Handle;
 use tokio_tcp::TcpListener;
 
 mod codec;
