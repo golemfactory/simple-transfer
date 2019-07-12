@@ -414,15 +414,16 @@ fn main() -> std::io::Result<()> {
     let opts = Arc::new(args);
 
     let addr = net::SocketAddr::from((opts.host, opts.port));
-    let listener = Arc::new(net::TcpListener::bind(&addr)?);
+    let listener = TcpListener::bind(&addr)?;
 
     let server_opts = opts.clone();
+    let _transfer_server = server::Server::new(db.clone(), listener);
 
-    let _server = HttpServer::new(move || {
+    let _rpc_server = HttpServer::new(move || {
+        /*
         let listener =
             TcpListener::from_std(listener.try_clone().unwrap(), &Handle::default()).unwrap();
-        server::Server::new(db.clone(), listener);
-
+        */
         App::new()
             .wrap(Logger::default())
             .data(State {
