@@ -419,7 +419,6 @@ fn main() -> std::io::Result<()> {
     let server_opts = opts.clone();
     let _transfer_server = server::Server::new(db.clone(), listener);
 
-
     let _rpc_server = HttpServer::new(move || {
         /*
         let listener =
