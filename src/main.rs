@@ -141,8 +141,8 @@ impl State {
             };
 
             // We do not trust timeout value for now.
-            // Keeping file hash for 1day should be good enough.
-            let valid_to = Some(SystemTime::now() + Duration::from_secs(3600 * 24));
+            // Keeping file hash for 3 days should be good enough.
+            let valid_to = Some(SystemTime::now() + Duration::from_secs(3600 * 24 * 3));
 
             future::Either::A(
                 db.send(RegisterHash {
@@ -414,15 +414,16 @@ fn main() -> std::io::Result<()> {
     let opts = Arc::new(args);
 
     let addr = net::SocketAddr::from((opts.host, opts.port));
-    let listener = Arc::new(net::TcpListener::bind(&addr)?);
+    let listener = TcpListener::bind(&addr)?;
 
     let server_opts = opts.clone();
+    let _transfer_server = server::Server::new(db.clone(), listener);
 
-    let _server = HttpServer::new(move || {
+    let _rpc_server = HttpServer::new(move || {
+        /*
         let listener =
             TcpListener::from_std(listener.try_clone().unwrap(), &Handle::default()).unwrap();
-        server::Server::new(db.clone(), listener);
-
+        */
         App::new()
             .wrap(Logger::default())
             .data(State {
