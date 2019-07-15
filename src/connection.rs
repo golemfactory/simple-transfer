@@ -2,7 +2,7 @@ use crate::codec::{AskReply, Block, GetBlock, StCodec, StCommand};
 
 use crate::database;
 use crate::database::{DatabaseManager, FileDesc};
-use crate::error::Error;
+use crate::error::{Error, ProtocolError};
 use crate::filemap::{FileMap, BLOCK_SIZE};
 use actix::io::WriteHandler;
 use actix::prelude::*;
@@ -35,8 +35,8 @@ pub struct Connection {
     framed: actix::io::FramedWrite<WriteHalf<TcpStream>, StCodec>,
     peer_id: Option<u128>,
     current_file: Option<Arc<database::FileDesc>>,
-    block_requests: HashMap<GetBlock, oneshot::Sender<Block>>,
-    ask_requests: HashMap<u128, oneshot::Sender<AskReply>>,
+    block_requests: HashMap<GetBlock, oneshot::Sender<Result<Block, Error>>>,
+    ask_requests: HashMap<u128, oneshot::Sender<Result<AskReply, Error>>>,
 }
 
 impl Drop for Connection {
@@ -56,7 +56,7 @@ impl Actor for Connection {
         ctx.run_later(HANDSHAKE_TIMEOUT, |act, ctx| {
             if act.peer_id.is_none() {
                 log::error!("identification timeout for {}", act.peer_addr);
-                ctx.stop();
+                act.close_with_error(ProtocolError::HandshakeTimeout, ctx)
             }
         });
     }
@@ -243,7 +243,7 @@ impl Connection {
             block_nr: b.block_nr,
         };
         if let Some(r) = self.block_requests.remove(&get_block) {
-            let _ = r.send(b);
+            let _ = r.send(Ok(b));
         } else {
             log::error!("response for not requested block");
         }
@@ -251,10 +251,24 @@ impl Connection {
 
     fn handle_ask_reply(&mut self, b: AskReply, _ctx: &mut <Self as Actor>::Context) {
         if let Some(h) = self.ask_requests.remove(&b.hash) {
-            let _ = h.send(b);
+            let _ = h.send(Ok(b));
         } else {
             log::warn!("unexpected ask reply");
         }
+    }
+
+    fn close_with_error(&mut self, e: ProtocolError, ctx: &mut <Self as Actor>::Context) {
+        std::mem::replace(&mut self.block_requests, HashMap::new())
+            .into_iter()
+            .for_each(|(_, sender)| {
+                let _ = sender.send(Err(e.into_err()));
+            });
+        std::mem::replace(&mut self.ask_requests, HashMap::new())
+            .into_iter()
+            .for_each(|(_, sender)| {
+                let _ = sender.send(Err(e.into_err()));
+            });
+        ctx.stop();
     }
 }
 
@@ -301,20 +315,20 @@ impl StreamHandler<StCommand, io::Error> for Connection {
             StCommand::Nop => (),
             StCommand::Bye => {
                 log::info!("disconnect from: {}", self.peer_addr);
-                ctx.stop()
+                self.close_with_error(ProtocolError::Disconnect, ctx)
             }
             StCommand::Hello(h) => {
                 if h.is_valid() {
                     self.peer_id = Some(h.node_id);
                 } else {
                     log::error!("invalid handshake from: {}", self.peer_addr);
-                    ctx.stop()
+                    self.close_with_error(ProtocolError::InvalidHandshake, ctx)
                 }
             }
             StCommand::Ask(hash) => {
                 if self.peer_id.is_none() {
                     log::error!("ask without handshake, disconnect");
-                    ctx.stop()
+                    self.close_with_error(ProtocolError::MissingHandshake, ctx)
                 } else {
                     self.handle_ask(hash, ctx)
                 }
@@ -338,7 +352,7 @@ impl Handler<crate::codec::Ask> for Connection {
         } else {
             self.framed.write(StCommand::Ask(msg.hash))
         }
-        ActorResponse::r#async(tx.from_err().into_actor(self))
+        ActorResponse::r#async(tx.flatten().into_actor(self))
     }
 }
 
@@ -352,7 +366,7 @@ impl Handler<crate::codec::GetBlock> for Connection {
         } else {
             self.framed.write(StCommand::GetBlock(msg))
         }
-        ActorResponse::r#async(tx.from_err().into_actor(self))
+        ActorResponse::r#async(tx.flatten().into_actor(self))
     }
 }
 
@@ -374,8 +388,10 @@ impl Handler<crate::codec::Bye> for Connection {
         ctx: &mut <Self as Actor>::Context,
     ) -> Self::Result {
         self.framed.write(StCommand::Bye);
-        ctx.run_later(Duration::from_secs(5), |_, ctx| {
-            ctx.stop();
+        log::debug!("got bye from: {}", self.peer_addr);
+
+        ctx.run_later(Duration::from_secs(5), |act, ctx| {
+            act.close_with_error(ProtocolError::DisconnectByMe, ctx)
         });
         Ok(())
     }

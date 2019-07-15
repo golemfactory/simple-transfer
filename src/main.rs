@@ -29,6 +29,7 @@ mod download;
 pub(crate) mod error;
 pub(crate) mod filemap;
 mod server;
+mod version;
 
 /// Simple resource transfer server for Golem Brass Network.
 #[derive(StructOpt, Clone)]
@@ -406,6 +407,8 @@ fn main() -> std::io::Result<()> {
     } else {
         log_builder.start().unwrap();
     }
+
+    version::startup_log();
 
     let sys = actix::System::new("hyperg");
 
