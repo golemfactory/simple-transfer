@@ -92,14 +92,12 @@ fn resolve_host(src: &str) -> Result<IpAddr, <IpAddr as FromStr>::Err> {
     }
 }
 
-const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-
 impl State {
     fn id(&self) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
         database::id(&self.db)
             .and_then(|id| {
                 let id = crate::codec::hash_to_hex(id);
-                let version = APP_VERSION.into();
+                let version = version::PACKAGE_VERSION.into();
                 Ok(HttpResponse::Ok().json(command::IdResult { id, version }))
             })
             .map_err(|e| actix_web::error::ErrorInternalServerError(e))
@@ -370,11 +368,26 @@ fn is_dir_path(p: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn detailed_format(
+    w: &mut dyn std::io::Write,
+    now: &mut flexi_logger::DeferredNow,
+    record: &flexi_logger::Record,
+) -> Result<(), std::io::Error> {
+    write!(
+        w,
+        "{} {} {} {}",
+        now.now().format("%Y-%m-%d %H:%M:%S"),
+        record.level(),
+        record.module_path().unwrap_or("<unnamed>"),
+        &record.args()
+    )
+}
+
 fn main() -> std::io::Result<()> {
     let args = ServerOpts::from_args();
 
     if args.version {
-        println!("{}", APP_VERSION);
+        println!("{}", version::PACKAGE_VERSION);
         return Ok(());
     }
 
@@ -396,6 +409,7 @@ fn main() -> std::io::Result<()> {
         log_builder
             .log_to_file()
             .duplicate_to_stderr(Duplicate::Info)
+            .format_for_files(detailed_format)
             .start()
             .unwrap_or_else(|e| {
                 eprintln!("Error {}", e);
