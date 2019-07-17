@@ -13,13 +13,12 @@ use log::Level;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
-use std::net::{self, IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use structopt::StructOpt;
-use tokio_tcp::TcpListener;
 
 mod codec;
 mod command;
@@ -412,17 +411,13 @@ fn main() -> std::io::Result<()> {
     let db = database::database_manager(&args.db);
     let opts = Arc::new(args);
 
-    let addr = net::SocketAddr::from((opts.host, opts.port));
-    let listener = TcpListener::bind(&addr)?;
-
     let server_opts = opts.clone();
-    let _transfer_server = server::Server::new(db.clone(), listener);
+
+    let _transfer_server = server::new(db.clone(), (opts.host, opts.port));
 
     let _rpc_server = HttpServer::new(move || {
-        /*
-        let listener =
-            TcpListener::from_std(listener.try_clone().unwrap(), &Handle::default()).unwrap();
-        */
+        //let listener = create_tcp_listener(addr.clone(), 10).unwrap();
+        //let _transfer_server = server::Server::new(db.clone(), TcpListener::from_std(listener, &Handle::default()).unwrap());
         App::new()
             .wrap(Logger::default())
             .data(State {
