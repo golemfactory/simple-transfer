@@ -53,12 +53,25 @@ impl Actor for Connection {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
+        log::info!(
+            "opened connection [{}] [{}]",
+            self.connection_id,
+            self.peer_addr
+        );
         ctx.run_later(HANDSHAKE_TIMEOUT, |act, ctx| {
             if act.peer_id.is_none() {
                 log::error!("identification timeout for {}", act.peer_addr);
                 act.close_with_error(ProtocolError::HandshakeTimeout, ctx)
             }
         });
+    }
+
+    fn stopped(&mut self, _: &mut Self::Context) {
+        log::info!(
+            "closed connection [{}] [{}]",
+            self.connection_id,
+            self.peer_addr
+        );
     }
 }
 
@@ -268,7 +281,11 @@ impl Connection {
             .for_each(|(_, sender)| {
                 let _ = sender.send(Err(e.into_err()));
             });
-        ctx.stop();
+        self.framed.close();
+        ctx.run_later(Duration::from_millis(10), |_, ctx| {
+            ctx.stop();
+        });
+        //
     }
 }
 
@@ -388,7 +405,7 @@ impl Handler<crate::codec::Bye> for Connection {
         ctx: &mut <Self as Actor>::Context,
     ) -> Self::Result {
         self.framed.write(StCommand::Bye);
-        log::debug!("got bye from: {}", self.peer_addr);
+        log::info!("bye to: {}", self.peer_addr);
 
         ctx.run_later(Duration::from_secs(5), |act, ctx| {
             act.close_with_error(ProtocolError::DisconnectByMe, ctx)
