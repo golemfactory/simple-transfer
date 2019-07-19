@@ -1,6 +1,30 @@
 use failure::Fail;
 use std::io;
 
+#[derive(Debug, Clone, Fail)]
+pub enum ProtocolError {
+    #[fail(display = "disconnect")]
+    Disconnect,
+
+    #[fail(display = "forced disconnect")]
+    DisconnectByMe,
+
+    #[fail(display = "invalid handshake")]
+    InvalidHandshake,
+
+    #[fail(display = "missing handshake")]
+    MissingHandshake,
+
+    #[fail(display = "handshake timeout")]
+    HandshakeTimeout,
+}
+
+impl ProtocolError {
+    pub fn into_err(&self) -> Error {
+        Error::ProtocolError(self.clone())
+    }
+}
+
 #[derive(Debug, Fail)]
 pub enum Error {
     #[fail(display = "{}", _0)]
@@ -23,6 +47,8 @@ pub enum Error {
     ResourceNotFound(u128),
     #[fail(display = "invalid block hash {:032x}", _0)]
     InvalidBlockHash(u128),
+    #[fail(display = "{}", _0)]
+    ProtocolError(#[cause] ProtocolError),
 }
 
 macro_rules! convert {
@@ -42,5 +68,6 @@ convert! {
     bincode::Error => InvalidBinFormat,
     serde_json::Error => InvalidJsonFormat,
     actix::MailboxError => Mailbox,
-    futures::Canceled => RequestCanceled
+    futures::Canceled => RequestCanceled,
+    ProtocolError => ProtocolError
 }

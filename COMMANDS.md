@@ -1,6 +1,54 @@
+### (1) Version check
+
+```
+POST /api HTTP/1.1
+
+{"command": "id"}
+```
+
+```
+{"id":"a69ca2ee780ce5df57855982dc6cb37e3cec6e408c2dcb54750bfafaf4fb13a2","version":"0.2.6"}
+```
+
+### (2) Addresses
+
+```
+POST /api
+
+{"command": "addresses"}
+```
+
+```
+{"addresses":{"TCP":{"address":"0.0.0.0","port":3282}}}
+```
 
 
-#### Check key
+### (3) Adding file
+
+```
+POST /api
+
+{"command": "upload", "id": null, "files": {"/home/prekucki/.local/share/golem/default/rinkeby/ComputerRes/e339a264-71a9-11e9-b4e5-b6178fcd50f4/resources/e339a264-71a9-11e9-b4e5-b6178fcd50f4": "e339a264-71a9-11e9-b4e5-b6178fcd50f4"}, "timeout": null}
+```
+
+```
+{"hash":"f88a92ddbadcfe23e976d92ba5019a81e5d818df4609adc01330d753834c46d8"}
+```
+
+### Download
+
+```
+POST /api HTTP/1.1
+
+{"command": "download", "hash": "c0ceff522b00eccb95c43b43af67c9585c3d914642339f770800dd164d8b42cc", "dest": "/home/prekucki/.local/share/golem/default/rinkeby/ComputerRes/nonce/tmp", "peers": [{"TCP": ["10.30.10.219", 3282]}, {"TCP": ["10.30.10.219", 3282]}, {"TCP": ["5.226.70.53", 3282]}, {"TCP": ["172.17.0.1", 3282]}], "size": null, "timeout": null}
+```
+
+```
+{"files":["/home/prekucki/.local/share/golem/default/rinkeby/ComputerRes/nonce/tmp/2047c8a0-fb9e-4306-a116-0df79367bd9e"]}
+```
+
+
+### Check key
 
 ```
 POST /api HTTP/1.1
@@ -24,7 +72,7 @@ content-type: application/json
 }
 ``` 
 
-#### Check key OK
+### Check key OK
 
 ```
 POST /api HTTP/1.1
