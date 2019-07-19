@@ -200,9 +200,10 @@ impl State {
             .map(|peer_info| match peer_info {
                 PeerInfo::TCP(address, port) => Ok(SocketAddr::new(address.parse()?, port)),
             })
-            .collect::<Result<_, std::net::AddrParseError>>() {
+            .collect::<Result<_, std::net::AddrParseError>>()
+        {
             Err(e) => return future::Either::B(future::err(actix_web::error::ErrorBadRequest(e))),
-            Ok(addrs) => addrs
+            Ok(addrs) => addrs,
         };
 
         future::Either::A(
