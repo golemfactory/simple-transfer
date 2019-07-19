@@ -204,6 +204,20 @@ impl Handler<GetHash> for DatabaseManager {
     }
 }
 
+pub struct RemoveHash(pub u128);
+
+impl Message for RemoveHash {
+    type Result = Result<Option<Arc<FileDesc>>, Error>;
+}
+
+impl Handler<RemoveHash> for DatabaseManager {
+    type Result = Result<Option<Arc<FileDesc>>, Error>;
+
+    fn handle(&mut self, msg: RemoveHash, _ctx: &mut Self::Context) -> Self::Result {
+        Ok(self.files.remove(&msg.0))
+    }
+}
+
 pub struct RegisterHash {
     pub files: Vec<(FileMap, PathBuf)>,
     pub valid_to: Option<time::SystemTime>,
@@ -227,6 +241,21 @@ impl Handler<RegisterHash> for DatabaseManager {
         };
         self.files.insert(map_hash, Arc::new(desc));
         Ok(map_hash)
+    }
+}
+
+#[derive(Default)]
+pub struct List {}
+
+impl Message for List {
+    type Result = Vec<Arc<FileDesc>>;
+}
+
+impl Handler<List> for DatabaseManager {
+    type Result = MessageResult<List>;
+
+    fn handle(&mut self, _: List, _: &mut Self::Context) -> Self::Result {
+        MessageResult(self.files.values().cloned().collect())
     }
 }
 
