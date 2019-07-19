@@ -195,12 +195,15 @@ impl State {
             Ok(hash) => hash,
         };
 
-        let peers: HashSet<_> = peers
+        let peers: HashSet<_> = match peers
             .into_iter()
             .map(|peer_info| match peer_info {
-                PeerInfo::TCP(address, port) => SocketAddr::new(address.parse().unwrap(), port),
+                PeerInfo::TCP(address, port) => Ok(SocketAddr::new(address.parse()?, port)),
             })
-            .collect();
+            .collect::<Result<_, std::net::AddrParseError>>() {
+            Err(e) => return future::Either::B(future::err(actix_web::error::ErrorBadRequest(e))),
+            Ok(addrs) => addrs
+        };
 
         future::Either::A(
             find_peer(hash, self.db.clone(), peers.into_iter().collect())
