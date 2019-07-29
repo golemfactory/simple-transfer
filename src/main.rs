@@ -10,7 +10,7 @@ use futures::{future, prelude::*};
 
 use flexi_logger::Duplicate;
 use log::Level;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -322,7 +322,7 @@ fn api(
     state: web::Data<State>,
     body: web::Json<command::Command>,
 ) -> Box<dyn Future<Item = HttpResponse, Error = actix_web::error::Error>> {
-    eprintln!("command={:?}", body.0);
+    body.0.log_start();
     match body.0 {
         command::Command::Id => Box::new(state.id()),
         command::Command::Addresses => Box::new(state.addresses()),

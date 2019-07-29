@@ -30,27 +30,23 @@ impl Command {
                 files,
                 hash,
                 timeout,
-                user,
             } => log::info!(
-                "command UPLOAD files={:?} timeout={:?} hash={:?} user={:?}",
+                "command UPLOAD files={:?} timeout={:?} hash={:?}",
                 files,
                 hash,
-                timeout,
-                user
+                timeout
             ),
             Command::Download {
                 hash,
                 dest,
                 peers,
                 timeout,
-                user,
             } => log::info!(
-                "command DOWNLOAD hash={}, dest={} peers={:?} timeout={:?} user={:?}",
+                "command DOWNLOAD hash={}, dest={} peers={:?} timeout={:?}",
                 hash,
                 dest.display(),
                 peers,
-                timeout,
-                user
+                timeout
             ),
         }
     }
