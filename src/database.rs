@@ -31,11 +31,15 @@ pub struct FileDesc {
 }
 
 impl FileDesc {
-
     #[inline]
-    fn log_event(&self, event_name:&str) {
+    fn log_event(&self, event_name: &str) {
         for (_, file_path) in &self.files {
-            log::info!("{} {:032x} {}", event_name, self.map_hash, file_path.display());
+            log::info!(
+                "{} {:032x} {}",
+                event_name,
+                self.map_hash,
+                file_path.display()
+            );
         }
     }
 }
@@ -256,16 +260,14 @@ impl Handler<RegisterHash> for DatabaseManager {
             let old_is_longer = match (prev.valid_to, msg.valid_to) {
                 (None, _) => true,
                 (Some(prev_valid_to), Some(new_valid_to)) => prev_valid_to > new_valid_to,
-                _ => false
+                _ => false,
             };
             if old_is_longer {
                 let _ = self.files.insert(map_hash, prev);
-            }
-            else {
+            } else {
                 desc.log_event("share extend");
             }
-        }
-        else {
+        } else {
             desc.log_event("share");
         }
         Ok(map_hash)

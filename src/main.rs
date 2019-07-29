@@ -5,7 +5,7 @@ use crate::download::find_peer;
 use crate::filemap::{hash_block, FileMap};
 use actix::Addr;
 use actix_web::middleware::Logger;
-use actix_web::{get, post, delete, web, App, HttpResponse, HttpServer};
+use actix_web::{delete, get, post, web, App, HttpResponse, HttpServer};
 use futures::{future, prelude::*};
 
 use flexi_logger::Duplicate;
@@ -139,7 +139,12 @@ impl State {
 
             // We do not trust timeout value for now.
             // Keeping file hash for 3 days should be good enough.
-            let valid_to = Some(SystemTime::now() + Duration::from_secs(timeout.unwrap_or_else(|| 3600.0 * 24.0 * 3f64).ceil() as u64));
+            let valid_to = Some(
+                SystemTime::now()
+                    + Duration::from_secs(
+                        timeout.unwrap_or_else(|| 3600.0 * 24.0 * 3f64).ceil() as u64
+                    ),
+            );
 
             future::Either::A(
                 db.send(RegisterHash {
