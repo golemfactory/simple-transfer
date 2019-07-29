@@ -21,6 +21,45 @@ pub enum Command {
     },
 }
 
+impl Command {
+    pub fn log_start(&self) {
+        match self {
+            Command::Id => log::info!("command st ID"),
+            Command::Addresses => log::info!("command st ADDRESSES"),
+            Command::Upload {
+                files,
+                hash,
+                timeout,
+            } => log::info!(
+                "command UPLOAD files={:?} timeout={:?} hash={:?}",
+                files,
+                hash,
+                timeout
+            ),
+            Command::Download {
+                hash,
+                dest,
+                peers,
+                timeout,
+            } => log::info!(
+                "command DOWNLOAD hash={}, dest={} peers={:?} timeout={:?}",
+                hash,
+                dest.display(),
+                peers,
+                timeout
+            ),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct User {
+    pub id: String,
+    pub env: String,
+    pub golem_version: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PeerInfo {
     TCP(String, u16),
