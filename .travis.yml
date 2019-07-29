@@ -16,7 +16,7 @@ dist: xenial
 matrix:
         fast_finish: true
 before_cache:
-- rm -rf /home/travis/.cargo/registry
+- rm -rf $HOME/.cargo/registry
 before_script:
 - |
   if [ -n "$TRAVIS_TAG" ]; then
