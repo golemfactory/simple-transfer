@@ -17,7 +17,15 @@ pub fn new(
                 let (tcp_stream, (), _) = stream.into_parts();
                 let peer_addr = tcp_stream.peer_addr()?;
                 log::info!("Connection from: {}", peer_addr);
-                let _conn = crate::connection::Connection::new(db.clone(), tcp_stream, peer_addr);
+                let conn = crate::connection::Connection::new(
+                    db.clone(),
+                    tcp_stream,
+                    peer_addr,
+                );
+                Arbiter::spawn(
+                    conn.and_then(|_| Ok(()))
+                        .map_err(|e| log::error!("failed to initalize connection: {}", e)),
+                );
                 Ok::<_, io::Error>(())
             })
         })?
