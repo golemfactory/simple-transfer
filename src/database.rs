@@ -30,6 +30,20 @@ pub struct FileDesc {
     pub valid_to: Option<time::SystemTime>,
 }
 
+impl FileDesc {
+    #[inline]
+    fn log_event(&self, event_name: &str) {
+        for (_, file_path) in &self.files {
+            log::info!(
+                "{} {:032x} {}",
+                event_name,
+                self.map_hash,
+                file_path.display()
+            );
+        }
+    }
+}
+
 pub struct DatabaseManager {
     dir: PathBuf,
     id: Option<u128>,
@@ -39,6 +53,7 @@ pub struct DatabaseManager {
 impl DatabaseManager {
     fn load_hash(&mut self, p: &path::Path) -> Result<(), Error> {
         let desc: FileDesc = bincode::deserialize_from(fs::OpenOptions::new().read(true).open(p)?)?;
+        desc.log_event("reshare");
         self.files.insert(desc.map_hash, Arc::new(desc));
         Ok(())
     }
@@ -109,9 +124,7 @@ impl DatabaseManager {
 
         for hash in expired_file_hashes {
             if let Some(file_desc) = self.files.remove(&hash) {
-                for (_, file_path) in &file_desc.files {
-                    log::info!("unshare {:032x} {}", hash, file_path.display());
-                }
+                file_desc.log_event("unshare");
             }
         }
     }
@@ -204,6 +217,24 @@ impl Handler<GetHash> for DatabaseManager {
     }
 }
 
+pub struct RemoveHash(pub u128);
+
+impl Message for RemoveHash {
+    type Result = Result<Option<Arc<FileDesc>>, Error>;
+}
+
+impl Handler<RemoveHash> for DatabaseManager {
+    type Result = Result<Option<Arc<FileDesc>>, Error>;
+
+    fn handle(&mut self, msg: RemoveHash, _ctx: &mut Self::Context) -> Self::Result {
+        let prev = self.files.remove(&msg.0);
+        if let Some(ref file_desc) = prev {
+            file_desc.log_event("unshare");
+        }
+        Ok(prev)
+    }
+}
+
 pub struct RegisterHash {
     pub files: Vec<(FileMap, PathBuf)>,
     pub valid_to: Option<time::SystemTime>,
@@ -219,14 +250,42 @@ impl Handler<RegisterHash> for DatabaseManager {
 
     fn handle(&mut self, msg: RegisterHash, _ctx: &mut Self::Context) -> Self::Result {
         let map_hash = crate::filemap::hash_bundles(msg.files.iter().map(|(map, _path)| map));
-        let desc = FileDesc {
+        let desc = Arc::new(FileDesc {
             map_hash,
             files: msg.files,
             inline_data: msg.inline_data,
-            valid_to: msg.valid_to,
-        };
-        self.files.insert(map_hash, Arc::new(desc));
+            valid_to: msg.valid_to.clone(),
+        });
+        if let Some(prev) = self.files.insert(map_hash, desc.clone()) {
+            let old_is_longer = match (prev.valid_to, msg.valid_to) {
+                (None, _) => true,
+                (Some(prev_valid_to), Some(new_valid_to)) => prev_valid_to > new_valid_to,
+                _ => false,
+            };
+            if old_is_longer {
+                let _ = self.files.insert(map_hash, prev);
+            } else {
+                desc.log_event("share extend");
+            }
+        } else {
+            desc.log_event("share");
+        }
         Ok(map_hash)
+    }
+}
+
+#[derive(Default)]
+pub struct List {}
+
+impl Message for List {
+    type Result = Vec<Arc<FileDesc>>;
+}
+
+impl Handler<List> for DatabaseManager {
+    type Result = MessageResult<List>;
+
+    fn handle(&mut self, _: List, _: &mut Self::Context) -> Self::Result {
+        MessageResult(self.files.values().cloned().collect())
     }
 }
 
@@ -250,9 +309,15 @@ impl Actor for GcWorker {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        let _ = ctx.run_interval(Duration::from_secs(300), |act, _| {
-            log::debug!("send gc start");
-            let _ = act.0.do_send(Gc);
+        let _ = ctx.run_interval(Duration::from_secs(30), |act, ctx| {
+            log::trace!("send gc start");
+            match act.0.do_send(Gc) {
+                Ok(()) => (),
+                Err(e) => {
+                    log::error!("gc error: {}", e);
+                    ctx.stop()
+                }
+            }
         });
     }
 }

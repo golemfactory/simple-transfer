@@ -87,23 +87,3 @@ pub fn hash_block(block: &[u8]) -> u128 {
     digest.input(block);
     extract_results(digest)
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    // no run
-    //    #[test]
-    fn test_hash_file() {
-        let m = hash_file(
-            "/home/prekucki/Downloads/swift-5.0-RELEASE-ubuntu18.04.tar.gz",
-            "test_task_1.tar.gz",
-        )
-        .unwrap();
-
-        for block in &m.blocks {
-            eprintln!("block: {:032x}", block);
-        }
-        eprintln!("hash={:032x}", hash_bundles(Some(m)));
-    }
-}
