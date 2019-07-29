@@ -1,5 +1,7 @@
+use crate::command::User;
 use crate::error::Error;
 use crate::filemap::FileMap;
+use crate::user_report::UserReportHandle;
 use actix::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -31,11 +33,15 @@ pub struct FileDesc {
 }
 
 impl FileDesc {
-
     #[inline]
-    fn log_event(&self, event_name:&str) {
+    fn log_event(&self, event_name: &str) {
         for (_, file_path) in &self.files {
-            log::info!("{} {:032x} {}", event_name, self.map_hash, file_path.display());
+            log::info!(
+                "{} {:032x} {}",
+                event_name,
+                self.map_hash,
+                file_path.display()
+            );
         }
     }
 }
@@ -43,14 +49,15 @@ impl FileDesc {
 pub struct DatabaseManager {
     dir: PathBuf,
     id: Option<u128>,
-    files: HashMap<u128, Arc<FileDesc>>,
+    files: HashMap<u128, (Arc<FileDesc>, UserReportHandle)>,
 }
 
 impl DatabaseManager {
     fn load_hash(&mut self, p: &path::Path) -> Result<(), Error> {
         let desc: FileDesc = bincode::deserialize_from(fs::OpenOptions::new().read(true).open(p)?)?;
         desc.log_event("reshare");
-        self.files.insert(desc.map_hash, Arc::new(desc));
+        self.files
+            .insert(desc.map_hash, (Arc::new(desc), UserReportHandle::empty()));
         Ok(())
     }
 
@@ -109,7 +116,7 @@ impl DatabaseManager {
         let expired_file_hashes: Vec<_> = self
             .files
             .iter()
-            .filter(|(_, v)| {
+            .filter(|(_, (v, _))| {
                 v.valid_to
                     .as_ref()
                     .map(|valid_to| valid_to < &now)
@@ -119,7 +126,7 @@ impl DatabaseManager {
             .collect();
 
         for hash in expired_file_hashes {
-            if let Some(file_desc) = self.files.remove(&hash) {
+            if let Some((file_desc, _)) = self.files.remove(&hash) {
                 file_desc.log_event("unshare");
             }
         }
@@ -198,15 +205,15 @@ pub fn id(m: &Addr<DatabaseManager>) -> impl Future<Item = u128, Error = Error> 
 pub struct GetHash(pub u128);
 
 impl Message for GetHash {
-    type Result = Result<Option<Arc<FileDesc>>, Error>;
+    type Result = Result<Option<(Arc<FileDesc>, UserReportHandle)>, Error>;
 }
 
 impl Handler<GetHash> for DatabaseManager {
-    type Result = Result<Option<Arc<FileDesc>>, Error>;
+    type Result = Result<Option<(Arc<FileDesc>, UserReportHandle)>, Error>;
 
     fn handle(&mut self, msg: GetHash, _ctx: &mut Self::Context) -> Self::Result {
-        if let Some(f) = self.files.get(&msg.0) {
-            Ok(Some(f.clone()))
+        if let Some((f, reporter)) = self.files.get(&msg.0) {
+            Ok(Some((f.clone(), reporter.clone())))
         } else {
             Ok(None)
         }
@@ -224,10 +231,12 @@ impl Handler<RemoveHash> for DatabaseManager {
 
     fn handle(&mut self, msg: RemoveHash, _ctx: &mut Self::Context) -> Self::Result {
         let prev = self.files.remove(&msg.0);
-        if let Some(ref file_desc) = prev {
+        Ok(if let Some((file_desc, _)) = prev {
             file_desc.log_event("unshare");
-        }
-        Ok(prev)
+            Some(file_desc)
+        } else {
+            None
+        })
     }
 }
 
@@ -235,6 +244,7 @@ pub struct RegisterHash {
     pub files: Vec<(FileMap, PathBuf)>,
     pub valid_to: Option<time::SystemTime>,
     pub inline_data: Vec<u8>,
+    pub reporter: UserReportHandle,
 }
 
 impl Message for RegisterHash {
@@ -246,26 +256,25 @@ impl Handler<RegisterHash> for DatabaseManager {
 
     fn handle(&mut self, msg: RegisterHash, _ctx: &mut Self::Context) -> Self::Result {
         let map_hash = crate::filemap::hash_bundles(msg.files.iter().map(|(map, _path)| map));
+        let reporter = msg.reporter;
         let desc = Arc::new(FileDesc {
             map_hash,
             files: msg.files,
             inline_data: msg.inline_data,
             valid_to: msg.valid_to.clone(),
         });
-        if let Some(prev) = self.files.insert(map_hash, desc.clone()) {
+        if let Some((prev, prev_reporter)) = self.files.insert(map_hash, (desc.clone(), reporter)) {
             let old_is_longer = match (prev.valid_to, msg.valid_to) {
                 (None, _) => true,
                 (Some(prev_valid_to), Some(new_valid_to)) => prev_valid_to > new_valid_to,
-                _ => false
+                _ => false,
             };
             if old_is_longer {
-                let _ = self.files.insert(map_hash, prev);
-            }
-            else {
+                let _ = self.files.insert(map_hash, (prev, prev_reporter));
+            } else {
                 desc.log_event("share extend");
             }
-        }
-        else {
+        } else {
             desc.log_event("share");
         }
         Ok(map_hash)
@@ -283,7 +292,7 @@ impl Handler<List> for DatabaseManager {
     type Result = MessageResult<List>;
 
     fn handle(&mut self, _: List, _: &mut Self::Context) -> Self::Result {
-        MessageResult(self.files.values().cloned().collect())
+        MessageResult(self.files.values().map(|(f, _)| f).cloned().collect())
     }
 }
 
