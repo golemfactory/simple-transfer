@@ -5,7 +5,7 @@ use crate::download::find_peer;
 use crate::filemap::{hash_block, FileMap};
 use actix::Addr;
 use actix_web::middleware::Logger;
-use actix_web::{post, web, App, HttpResponse, HttpServer};
+use actix_web::{delete, get, post, web, App, HttpResponse, HttpServer};
 use futures::{future, prelude::*};
 
 use flexi_logger::Duplicate;
@@ -17,7 +17,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use structopt::StructOpt;
 
 mod codec;
@@ -114,7 +114,7 @@ impl State {
     fn upload(
         &self,
         files: impl IntoIterator<Item = (PathBuf, String)>,
-        _timeout: Option<f64>,
+        timeout: Option<f64>,
     ) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
         let hashed: Result<Vec<(filemap::FileMap, PathBuf)>, _> = files
             .into_iter()
@@ -139,7 +139,12 @@ impl State {
 
             // We do not trust timeout value for now.
             // Keeping file hash for 3 days should be good enough.
-            let valid_to = Some(SystemTime::now() + Duration::from_secs(3600 * 24 * 3));
+            let valid_to = Some(
+                SystemTime::now()
+                    + Duration::from_secs(
+                        timeout.unwrap_or_else(|| 3600.0 * 24.0 * 3f64).ceil() as u64
+                    ),
+            );
 
             future::Either::A(
                 db.send(RegisterHash {
@@ -317,7 +322,7 @@ fn api(
     state: web::Data<State>,
     body: web::Json<command::Command>,
 ) -> Box<dyn Future<Item = HttpResponse, Error = actix_web::error::Error>> {
-    eprintln!("command={:?}", body.0);
+    body.0.log_start();
     match body.0 {
         command::Command::Id => Box::new(state.id()),
         command::Command::Addresses => Box::new(state.addresses()),
@@ -352,6 +357,100 @@ fn api(
             ))))
         }
     }
+}
+
+#[get("/resources")]
+fn list_resources(
+    state: web::Data<State>,
+) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
+    //Box::new(
+    state
+        .db
+        .send(database::List::default())
+        .map_err(|e| actix_web::error::ErrorInternalServerError(e))
+        .and_then(|resources| {
+            let output: Vec<serde_json::Value> = resources
+                .into_iter()
+                .map(|resource| {
+                    let hash = hash_to_hex(resource.map_hash);
+                    let n_files = resource.files.len();
+                    let size: u64 = resource
+                        .files
+                        .iter()
+                        .map(|(file_map, _)| file_map.file_size)
+                        .sum();
+                    let valid_to = resource
+                        .valid_to
+                        .map(|ts| ts.duration_since(UNIX_EPOCH).unwrap().as_secs());
+
+                    serde_json::json!({
+                        "hash": hash,
+                        "files": n_files,
+                        "totalSize": size,
+                        "validTo": valid_to
+                    })
+                })
+                .collect();
+
+            Ok(HttpResponse::Ok().json(output))
+        })
+}
+
+#[get("/resources/{resourceId}")]
+fn get_resource_info(
+    state: web::Data<State>,
+    path: web::Path<(String,)>,
+) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
+    let hash = match u128::from_str_radix(&path.0, 16) {
+        Err(e) => return future::Either::B(future::err(actix_web::error::ErrorBadRequest(e))),
+        Ok(hash) => hash,
+    };
+
+    future::Either::A(
+        state
+            .db
+            .send(database::GetHash(hash))
+            .flatten()
+            .map_err(|e| actix_web::error::ErrorInternalServerError(e))
+            .and_then(|r: Option<Arc<database::FileDesc>>| match r {
+                None => Ok(HttpResponse::NotFound().body("resource not found")),
+                Some(file_desc) => {
+                    let files: Vec<(String, String)> = file_desc
+                        .files
+                        .iter()
+                        .map(|(file_map, path)| {
+                            (path.display().to_string(), file_map.file_name.clone())
+                        })
+                        .collect();
+                    Ok(HttpResponse::Ok().json(serde_json::json!({
+                        "hash": hash_to_hex(file_desc.map_hash),
+                        "files": files
+                    })))
+                }
+            }),
+    )
+}
+
+#[delete("/resources/{resourceId}")]
+fn remove_resource(
+    state: web::Data<State>,
+    path: web::Path<(String,)>,
+) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
+    let hash = match u128::from_str_radix(&path.0, 16) {
+        Err(e) => return future::Either::B(future::err(actix_web::error::ErrorBadRequest(e))),
+        Ok(hash) => hash,
+    };
+    future::Either::A(
+        state
+            .db
+            .send(database::RemoveHash(hash))
+            .flatten()
+            .map_err(|e| actix_web::error::ErrorInternalServerError(e))
+            .and_then(|r: Option<Arc<database::FileDesc>>| match r {
+                None => Ok(HttpResponse::NotFound().body("resource not found")),
+                Some(_) => Ok(HttpResponse::NoContent().finish()),
+            }),
+    )
 }
 
 fn log_string_for_level(level: &Level) -> &'static str {
@@ -434,17 +533,18 @@ fn main() -> std::io::Result<()> {
 
     let server_opts = opts.clone();
 
-    let _transfer_server = server::new(db.clone(), (opts.host, opts.port));
+    let _transfer_server = server::new(db.clone(), (opts.host, opts.port))?;
 
     let _rpc_server = HttpServer::new(move || {
-        //let listener = create_tcp_listener(addr.clone(), 10).unwrap();
-        //let _transfer_server = server::Server::new(db.clone(), TcpListener::from_std(listener, &Handle::default()).unwrap());
         App::new()
             .wrap(Logger::default())
             .data(State {
                 db: db.clone(),
                 opts: opts.clone(),
             })
+            .service(list_resources)
+            .service(get_resource_info)
+            .service(remove_resource)
             .service(api)
     })
     .bind((server_opts.rpc_host, server_opts.rpc_port))?
