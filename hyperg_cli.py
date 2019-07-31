@@ -7,6 +7,7 @@ import os
 import argparse
 import requests
 
+
 class Id:
     """Server identification response representation."""
 
@@ -28,9 +29,11 @@ class Id:
     def version(self) -> str:
         return self._version
 
+
 class Environment(Enum):
     MAINNET = "mainnet"
     TESTNET = "testnet"
+
 
 class HypergLogContext:
 
@@ -39,7 +42,8 @@ class HypergLogContext:
                  env: Environment,
                  node_name: Optional[str] = None,
                  golem_version: Optional[str] = None) -> None:
-        self._node_id = node_id if len(node_id) < 35 else f"{node_id[:16]}...{node_id[-16:]}"
+        self._node_id = node_id if len(
+            node_id) < 35 else f"{node_id[:16]}...{node_id[-16:]}"
         self._env = env
         self._node_name = node_name
         self._golem_ver = golem_version
@@ -68,8 +72,11 @@ class HypergLogContext:
 
         return json
 
+
 class HypergClient:
-    def __init__(self, rpc_port: Optional[int] = None,
+
+    def __init__(self,
+                 rpc_port: Optional[int] = None,
                  log_context: Optional[HypergLogContext] = None) -> None:
         self._url: str = 'http://127.0.0.1:%d/api' % (rpc_port or 3292,)
         self._log_context = log_context
@@ -96,18 +103,30 @@ class HypergClient:
         """RPC call. Returns server version and identyfication data."""
         return Id(self._call_rpc({'command': 'id'}))
 
-    def upload(self, file_names: List[str], timeout: Optional[float] = None) -> str:
+    def upload(self, file_names: List[str],
+               timeout: Optional[float] = None) -> str:
         """RPC call. Requests files upload. Returns hash of given file set."""
         files = {}
         for name in file_names:
             files[name] = os.path.basename(name)
-        res = self._call_rpc({'command': 'upload', 'files': files, 'timeout': timeout})
+        res = self._call_rpc({
+            'command': 'upload',
+            'files': files,
+            'timeout': timeout
+        })
         return res['hash']
 
-    def download(self, files_hash: str, outdir: Path, peers: List[Tuple[str, int]]):
+    def download(self, files_hash: str, outdir: Path,
+                 peers: List[Tuple[str, int]]):
         """Requests files download from given canditates"""
-        result = self._call_rpc({'command': 'download', 'hash': files_hash, 'dest': str(outdir),
-                                 'peers': [{'TCP': peer} for peer in peers]})
+        result = self._call_rpc({
+            'command': 'download',
+            'hash': files_hash,
+            'dest': str(outdir),
+            'peers': [{
+                'TCP': peer
+            } for peer in peers]
+        })
         return result['files']
 
 
@@ -119,41 +138,57 @@ def parse_addr(addr: str) -> Tuple[str, int]:
 
     return (addr_parts[0], int(addr_parts[1]))
 
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--rpc-port', type=int, help='hyperg rpc port', default=3292)
+    parser.add_argument('--rpc-port',
+                        type=int,
+                        help='hyperg rpc port',
+                        default=3292)
 
     log_opts = parser.add_argument_group('sentry', 'sentry logging options')
-    log_opts.add_argument('--node-id', help='sentry user id, required for sentry logging')
+    log_opts.add_argument('--node-id',
+                          help='sentry user id, required for sentry logging')
     log_opts.add_argument('--node-name')
-    log_opts.add_argument('--env', type=Environment, nargs='?', help='environment classifier: testnet, mainnet', default=Environment.TESTNET)
+    log_opts.add_argument('--env',
+                          type=Environment,
+                          nargs='?',
+                          help='environment classifier: testnet, mainnet',
+                          default=Environment.TESTNET)
     log_opts.add_argument('--golem-version', type=str, nargs='?')
 
     subparsers = parser.add_subparsers(dest='command')
     _parser_id = subparsers.add_parser('id', help='gets server version')
     parser_upload = subparsers.add_parser('upload', help='requests upload')
     parser_upload.add_argument('file', type=argparse.FileType('r'), nargs='+')
-    parser_upload.add_argument('-t', '--timeout', type=float, nargs='?',
+    parser_upload.add_argument('-t',
+                               '--timeout',
+                               type=float,
+                               nargs='?',
                                help='sharing time in seconds')
 
-    parser_download = subparsers.add_parser('download', help='requests download')
+    parser_download = subparsers.add_parser('download',
+                                            help='requests download')
     parser_download.add_argument('hash', type=str, help='file set hash')
     parser_download.add_argument('outdir', type=Path, help='output path')
-    parser_download.add_argument('peer', type=str, nargs='+',
+    parser_download.add_argument('peer',
+                                 type=str,
+                                 nargs='+',
                                  help='ip[:port] of peer to download from')
 
     args = parser.parse_args()
     print('=', repr(args))
 
-
     user = None
     if args.node_id is not None:
-        user = HypergLogContext(args.node_id, args.env, args.node_name, args.golem_version)
+        user = HypergLogContext(args.node_id, args.env, args.node_name,
+                                args.golem_version)
 
     client = HypergClient(rpc_port=args.rpc_port, log_context=user)
 
     if args.command == 'upload':
-        res = client.upload([os.path.abspath(f.name) for f in args.file], args.timeout)
+        res = client.upload([os.path.abspath(f.name) for f in args.file],
+                            args.timeout)
         print('res=', res)
     elif args.command == 'id':
         print(client.server_id())
@@ -162,13 +197,14 @@ def main():
         if not outdir.is_dir():
             outdir.mkdir()
 
-        print(client.download(args.hash,
-                              outdir, [parse_addr(addr) for addr in args.peer]))
+        print(
+            client.download(args.hash, outdir,
+                            [parse_addr(addr) for addr in args.peer]))
     else:
         parser.print_help()
 
-__all__ = ['HypergClient', 'Id']
 
+__all__ = ['HypergClient', 'Id']
 
 if __name__ == '__main__':
     main()
