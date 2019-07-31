@@ -1,7 +1,7 @@
 use crate::database::DatabaseManager;
 use actix::prelude::*;
 use actix_server::Io;
-use actix_service::{service_fn, ServiceExt};
+use actix_service::service_fn;
 
 use std::{io, net};
 use tokio_tcp::TcpStream;

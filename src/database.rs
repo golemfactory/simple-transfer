@@ -1,4 +1,3 @@
-use crate::command::User;
 use crate::error::Error;
 use crate::filemap::FileMap;
 use crate::user_report::UserReportHandle;

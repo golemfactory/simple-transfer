@@ -6,9 +6,9 @@ edition = "2018"
 publish=false
 
 [features]
-#default = []
-default = ['sentry-logging']
-sentry-logging=['sentry']
+default = []
+#default = ['with-sentry']
+with-sentry=['sentry']
 
 [dependencies]
 

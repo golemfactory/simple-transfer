@@ -492,7 +492,7 @@ fn remove_resource(
 }
 
 fn main() -> std::io::Result<()> {
-    sentry::integrations::panic::register_panic_handler();
+    user_report::init();
     let args = ServerOpts::from_args();
 
     if args.version {
