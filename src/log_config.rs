@@ -1,6 +1,6 @@
 use flexi_logger::Duplicate;
 use log::Level;
-use std::path::{Path};
+use std::path::Path;
 
 fn log_string_for_level(level: Level) -> &'static str {
     match level {
