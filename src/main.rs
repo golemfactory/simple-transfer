@@ -30,7 +30,6 @@ pub(crate) mod filemap;
 mod server;
 mod version;
 
-/// Simple resource transfer server for Golem Brass Network.
 #[derive(StructOpt, Clone)]
 #[structopt(raw(global_setting = "structopt::clap::AppSettings::DisableVersion"))]
 struct ServerOpts {
