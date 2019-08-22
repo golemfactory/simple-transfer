@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -33,14 +32,14 @@ impl Command {
             Command::Addresses => log::info!("command st ADDRESSES"),
             Command::Upload {
                 files,
-                hash,
                 timeout,
+                hash,
                 user,
             } => log::info!(
                 "command UPLOAD files={:?} timeout={:?} hash={:?} user={:?}",
                 files,
-                hash,
                 timeout,
+                hash,
                 user
             ),
             Command::Download {
@@ -68,11 +67,12 @@ pub enum AppEnv {
     MainNet,
 }
 
+#[cfg(feature = "with-sentry")]
 impl AppEnv {
-    pub fn to_str(&self) -> Cow<'static, str> {
+    pub fn to_str(&self) -> std::borrow::Cow<'static, str> {
         match self {
-            AppEnv::TestNet => Cow::Borrowed("testnet"),
-            AppEnv::MainNet => Cow::Borrowed("mainnet"),
+            AppEnv::TestNet => std::borrow::Cow::Borrowed("testnet"),
+            AppEnv::MainNet => std::borrow::Cow::Borrowed("mainnet"),
         }
     }
 }

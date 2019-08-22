@@ -171,14 +171,14 @@ mod without_sentry {
     pub struct UserReportHandle {}
 
     impl<UserRef: AsRef<User>> From<UserRef> for UserReportHandle {
-        fn from(u: UserRef) -> Self {
+        fn from(_u: UserRef) -> Self {
             UserReportHandle {}
         }
     }
 
     impl UserReportHandle {
         #[inline]
-        pub fn start(user: &Option<User>) -> UserReportHandle {
+        pub fn start(_user: &Option<User>) -> UserReportHandle {
             UserReportHandle {}
         }
 
@@ -197,9 +197,9 @@ mod without_sentry {
             log::error!("failed processing {}: {}", stage, error);
         }
 
-        pub fn emit_fail(&self, e: &impl AsFail) {}
+        pub fn emit_fail(&self, _e: &impl AsFail) {}
 
-        pub fn emit_warn(&self, message: String) {}
+        pub fn emit_warn(&self, _message: String) {}
 
         #[inline]
         pub fn add_breadcrumb<MessageFactory: FnOnce() -> String>(

@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{fs, path, time};
+use std::collections::hash_map::Entry;
 
 /// metadata format
 const FORMAT_VERSION: u32 = 1;
@@ -262,19 +263,24 @@ impl Handler<RegisterHash> for DatabaseManager {
             inline_data: msg.inline_data,
             valid_to: msg.valid_to.clone(),
         });
-        if let Some((prev, prev_reporter)) = self.files.insert(map_hash, (desc.clone(), reporter)) {
-            let old_is_longer = match (prev.valid_to, msg.valid_to) {
-                (None, _) => true,
-                (Some(prev_valid_to), Some(new_valid_to)) => prev_valid_to > new_valid_to,
-                _ => false,
-            };
-            if old_is_longer {
-                let _ = self.files.insert(map_hash, (prev, prev_reporter));
-            } else {
-                desc.log_event("share extend");
+
+        match self.files.entry(map_hash) {
+            Entry::Occupied(mut ent) => {
+                let prev_ent = ent.get_mut();
+                let old_is_longer = match (prev_ent.0.valid_to, msg.valid_to) {
+                    (None, _) => true,
+                    (Some(prev_valid_to), Some(new_valid_to)) => prev_valid_to > new_valid_to,
+                    _ => false,
+                };
+                if !old_is_longer {
+                    prev_ent.0 = desc.clone();
+                    desc.log_event("share extend");
+                }
             }
-        } else {
-            desc.log_event("share");
+            Entry::Vacant(ent) => {
+                ent.insert((desc.clone(), reporter));
+                desc.log_event("share");
+            }
         }
         Ok(map_hash)
     }

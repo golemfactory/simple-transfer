@@ -27,12 +27,9 @@ pub(crate) mod error;
 pub(crate) mod filemap;
 mod log_config;
 mod server;
+mod user_report;
 mod version;
 
-//#[cfg_attr(feature = "sentry-logging", path = "user_report_log.rs")]
-mod user_report;
-
-/// Simple resource transfer server for Golem Brass Network.
 #[derive(StructOpt, Clone)]
 #[structopt(raw(global_setting = "structopt::clap::AppSettings::DisableVersion"))]
 struct ServerOpts {
@@ -453,16 +450,24 @@ fn get_resource_info(
             .and_then(|r| match r {
                 None => Ok(HttpResponse::NotFound().body("resource not found")),
                 Some((file_desc, _)) => {
+                    let mut size: u64 = 0;
                     let files: Vec<(String, String)> = file_desc
                         .files
                         .iter()
                         .map(|(file_map, path)| {
+                            size += file_map.file_size;
                             (path.display().to_string(), file_map.file_name.clone())
                         })
                         .collect();
+                    let valid_to = file_desc
+                        .valid_to
+                        .map(|ts| ts.duration_since(UNIX_EPOCH).unwrap().as_secs());
+
                     Ok(HttpResponse::Ok().json(serde_json::json!({
                         "hash": hash_to_hex(file_desc.map_hash),
-                        "files": files
+                        "files": files,
+                        "totalSize": size,
+                        "validTo": valid_to
                     })))
                 }
             }),
