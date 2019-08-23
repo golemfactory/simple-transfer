@@ -41,13 +41,18 @@ before_script:
                   DEPLOY_FILE="hyperg_${TRAVIS_TAG}_darwin-x64.tar.gz"
                   CARGO_BUILD_OPTS="--release"
           fi
-
+          if [ "$BUILD_OPT" = "sentry" ]; then
+                CARGO_BUILD_OPTS="$CARGO_BUILD_OPTS --features with-sentry"
+          fi
   fi
 - rustup component add rustfmt --toolchain stable
 - rustup component list --toolchain stable
 - rustup show
 script:
-- [ -n "$BUILD_OPT" ] && [ -z "$TRAVIS_TAG" ] && exit 0
+- |
+       if [ -n "$BUILD_OPT" ] && [ -z "$TRAVIS_TAG" ] && [ "$TRAVIS_OS_NAME" != "linux" ]; then
+                exit 0
+       fi
 - cargo +stable fmt --all -- --check
 - cargo build $CARGO_BUILD_OPTS
 - cargo test --all $CARGO_BUILD_OPTS
