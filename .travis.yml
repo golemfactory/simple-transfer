@@ -5,6 +5,9 @@ os:
 - windows
 rust:
 - stable
+env:
+  - BUILD_OPT=
+  - BUILD_OPT=sentry
 addons:
   apt:
     packages:
@@ -44,6 +47,7 @@ before_script:
 - rustup component list --toolchain stable
 - rustup show
 script:
+- [ -n "$BUILD_OPT" ] && [ -z "$TRAVIS_TAG" ] && exit 0
 - cargo +stable fmt --all -- --check
 - cargo build $CARGO_BUILD_OPTS
 - cargo test --all $CARGO_BUILD_OPTS

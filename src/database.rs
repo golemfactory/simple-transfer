@@ -4,12 +4,12 @@ use crate::user_report::UserReportHandle;
 use actix::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{fs, path, time};
-use std::collections::hash_map::Entry;
 
 /// metadata format
 const FORMAT_VERSION: u32 = 1;
