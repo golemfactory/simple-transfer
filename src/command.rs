@@ -12,12 +12,16 @@ pub enum Command {
         files: Option<HashMap<PathBuf, String>>,
         timeout: Option<f64>,
         hash: Option<String>,
+        #[serde(default)]
+        user: Option<User>,
     },
     Download {
         hash: String,
         dest: PathBuf,
         peers: Vec<PeerInfo>,
         timeout: Option<f64>,
+        #[serde(default)]
+        user: Option<User>,
     },
 }
 
@@ -28,35 +32,59 @@ impl Command {
             Command::Addresses => log::info!("command st ADDRESSES"),
             Command::Upload {
                 files,
-                hash,
                 timeout,
-            } => log::info!(
-                "command UPLOAD files={:?} timeout={:?} hash={:?}",
-                files,
                 hash,
-                timeout
+                user,
+            } => log::info!(
+                "command UPLOAD files={:?} timeout={:?} hash={:?} user={:?}",
+                files,
+                timeout,
+                hash,
+                user
             ),
             Command::Download {
                 hash,
                 dest,
                 peers,
                 timeout,
+                user,
             } => log::info!(
-                "command DOWNLOAD hash={}, dest={} peers={:?} timeout={:?}",
+                "command DOWNLOAD hash={}, dest={} peers={:?} timeout={:?} user={:?}",
                 hash,
                 dest.display(),
                 peers,
-                timeout
+                timeout,
+                user
             ),
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum AppEnv {
+    TestNet,
+    MainNet,
+}
+
+#[cfg(feature = "with-sentry")]
+impl AppEnv {
+    pub fn to_str(&self) -> std::borrow::Cow<'static, str> {
+        match self {
+            AppEnv::TestNet => std::borrow::Cow::Borrowed("testnet"),
+            AppEnv::MainNet => std::borrow::Cow::Borrowed("mainnet"),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: String,
-    pub env: String,
+    pub env: AppEnv,
+    #[serde(default)]
+    pub node_name: Option<String>,
+    #[serde(default)]
     pub golem_version: Option<String>,
 }
 

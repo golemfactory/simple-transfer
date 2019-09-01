@@ -37,6 +37,7 @@ pub struct Connection {
     current_file: Option<Arc<database::FileDesc>>,
     block_requests: HashMap<GetBlock, oneshot::Sender<Result<Block, Error>>>,
     ask_requests: HashMap<u128, oneshot::Sender<Result<AskReply, Error>>>,
+    reporter: crate::user_report::UserReportHandle,
 }
 
 impl Drop for Connection {
@@ -60,7 +61,11 @@ impl Actor for Connection {
         );
         ctx.run_later(HANDSHAKE_TIMEOUT, |act, ctx| {
             if act.peer_id.is_none() {
-                log::error!("identification timeout for {}", act.peer_addr);
+                log::error!(
+                    "[{}] identification timeout for {}",
+                    act.connection_id,
+                    act.peer_addr
+                );
                 act.close_with_error(ProtocolError::HandshakeTimeout, ctx)
             }
         });
@@ -80,12 +85,17 @@ impl Connection {
         db: Addr<DatabaseManager>,
         tcp_stream: TcpStream,
         peer_addr: net::SocketAddr,
+        reporter: &crate::user_report::UserReportHandle,
     ) -> Addr<Connection> {
         let connection_id = CONNECTION_IDS.fetch_add(1, Ordering::SeqCst);
+        let reporter = reporter.new_context();
         let addr: Addr<Connection> = Connection::create(move |ctx| {
             let (r, w) = tcp_stream.split();
             let framed = actix::io::FramedWrite::new(w, StCodec::default(), ctx);
             log::debug!("opened connection id={}, peer={}", connection_id, peer_addr);
+
+            reporter.annotate("connection_id", &connection_id);
+            reporter.annotate("peer", &peer_addr);
 
             Connection::add_stream(FramedRead::new(r, StCodec::default()), ctx);
             Connection {
@@ -97,6 +107,7 @@ impl Connection {
                 current_file: None,
                 block_requests: HashMap::new(),
                 ask_requests: HashMap::new(),
+                reporter,
             }
         });
 
@@ -107,9 +118,10 @@ impl Connection {
         db: Addr<DatabaseManager>,
         tcp_stream: TcpStream,
         peer_addr: net::SocketAddr,
+        reporter: &crate::user_report::UserReportHandle,
     ) -> impl Future<Item = Addr<Connection>, Error = Error> {
         let id_fut = database::id(&db);
-        let addr = Self::new_addr(db, tcp_stream, peer_addr);
+        let addr = Self::new_addr(db, tcp_stream, peer_addr, reporter);
 
         id_fut.and_then(move |id| {
             addr.send(crate::codec::Hello::new(id))
@@ -122,9 +134,10 @@ impl Connection {
         db: Addr<DatabaseManager>,
         tcp_stream: TcpStream,
         peer_addr: net::SocketAddr,
+        reporter: &crate::user_report::UserReportHandle,
     ) -> impl Future<Item = ConnectionRef, Error = Error> {
         let id_fut = database::id(&db);
-        let addr = ConnectionRef(Self::new_addr(db, tcp_stream, peer_addr));
+        let addr = ConnectionRef(Self::new_addr(db, tcp_stream, peer_addr, reporter));
 
         id_fut.and_then(move |id| {
             addr.send(crate::codec::Hello::new(id))
@@ -169,23 +182,22 @@ impl Connection {
                 Ok(v) => v,
             })
             .into_actor(self)
-            .and_then(
-                move |file_desc: Option<Arc<FileDesc>>, act: &mut Self, ctx| match file_desc {
-                    Some(file_desc) => {
-                        if file_desc.map_hash == reply_hash {
-                            act.current_file = Some(file_desc.clone());
-                            act.send_ask_reply(file_desc.as_ref().clone(), ctx);
-                            fut::ok(())
-                        } else {
-                            panic!("unexpected result on db call")
-                        }
-                    }
-                    None => {
-                        act.send_ask_reply_not_found(reply_hash, ctx);
+            .and_then(move |r, act: &mut Self, ctx| match r {
+                Some((file_desc, reporter)) => {
+                    act.reporter = reporter;
+                    if file_desc.map_hash == reply_hash {
+                        act.current_file = Some(file_desc.clone());
+                        act.send_ask_reply(file_desc.as_ref().clone(), ctx);
                         fut::ok(())
+                    } else {
+                        panic!("unexpected result on db call")
                     }
-                },
-            )
+                }
+                None => {
+                    act.send_ask_reply_not_found(reply_hash, ctx);
+                    fut::ok(())
+                }
+            })
             .map_err(|_e, act, ctx| {
                 log::error!("fail to handle ask from: {}", &act.peer_addr);
                 ctx.stop()
@@ -271,6 +283,7 @@ impl Connection {
     }
 
     fn close_with_error(&mut self, e: ProtocolError, ctx: &mut <Self as Actor>::Context) {
+        self.reporter.emit_fail(&e);
         std::mem::replace(&mut self.block_requests, HashMap::new())
             .into_iter()
             .for_each(|(_, sender)| {

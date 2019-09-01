@@ -8,13 +8,11 @@ use actix_web::middleware::Logger;
 use actix_web::{delete, get, post, web, App, HttpResponse, HttpServer};
 use futures::{future, prelude::*};
 
-use flexi_logger::Duplicate;
-use log::Level;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -27,7 +25,9 @@ pub(crate) mod database;
 mod download;
 pub(crate) mod error;
 pub(crate) mod filemap;
+mod log_config;
 mod server;
+mod user_report;
 mod version;
 
 #[derive(StructOpt, Clone)]
@@ -114,6 +114,7 @@ impl State {
         &self,
         files: impl IntoIterator<Item = (PathBuf, String)>,
         timeout: Option<f64>,
+        reporter: user_report::UserReportHandle,
     ) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
         let hashed: Result<Vec<(filemap::FileMap, PathBuf)>, _> = files
             .into_iter()
@@ -150,6 +151,7 @@ impl State {
                     files: file_maps,
                     valid_to,
                     inline_data,
+                    reporter,
                 })
                 .then(|r| match r {
                     Err(_e) => Err(actix_web::error::ErrorInternalServerError("database lost")),
@@ -173,10 +175,10 @@ impl State {
             .and_then(move |hash| {
                 db.send(database::GetHash(hash))
                     .flatten()
-                    .map_err(|e| actix_web::error::ErrorInternalServerError(e))
+                    .map_err(actix_web::error::ErrorInternalServerError)
             })
-            .and_then(|r: Option<Arc<database::FileDesc>>| {
-                if let Some(desc) = r {
+            .and_then(|r: Option<(Arc<database::FileDesc>, _)>| {
+                if let Some((desc, _)) = r {
                     Ok(HttpResponse::Ok().json(UploadResult {
                         hash: hash_to_hex(desc.map_hash),
                     }))
@@ -192,6 +194,7 @@ impl State {
         dest: PathBuf,
         peers: Vec<PeerInfo>,
         _timeout: Option<f64>,
+        reporter: user_report::UserReportHandle,
     ) -> impl Future<Item = HttpResponse, Error = actix_web::error::Error> {
         let hash = match u128::from_str_radix(&hash, 16) {
             Err(e) => return future::Either::B(future::err(actix_web::error::ErrorBadRequest(e))),
@@ -210,32 +213,47 @@ impl State {
         };
 
         future::Either::A(
-            find_peer(hash, self.db.clone(), peers.into_iter().collect())
-                .and_then(move |(connection, file_map): (_, Vec<FileMap>)| {
-                    use futures::prelude::*;
+            find_peer(
+                hash,
+                self.db.clone(),
+                peers.into_iter().collect(),
+                reporter.clone(),
+            )
+            .and_then(move |(connection, file_map, peer): (_, Vec<FileMap>, _)| {
+                use futures::prelude::*;
+                reporter.add_note(|| "got connection!".to_string());
+                reporter.annotate("peer", &peer);
 
-                    futures::stream::iter_ok(file_map.into_iter().enumerate())
-                        .and_then(move |(file_no, file_map)| {
-                            let hash = hash;
-                            let out_path = dest.join(&file_map.file_name);
-                            let connection = connection.clone();
+                futures::stream::iter_ok(file_map.into_iter().enumerate())
+                    .and_then(move |(file_no, file_map)| {
+                        let reporter = reporter.clone();
+                        let hash = hash;
+                        let out_path = dest.join(&file_map.file_name);
+                        let connection = connection.clone();
 
-                            if out_path.exists() {
-                                log::warn!("path: {} already exists", out_path.display());
-                                let _ = std::fs::rename(&out_path, out_path.with_extension("bak"));
-                            }
+                        if out_path.exists() {
+                            reporter
+                                .emit_warn(format!("path: {} already exists", out_path.display()));
+                            log::warn!("path: {} already exists", out_path.display());
+                            let _ = std::fs::rename(&out_path, out_path.with_extension("bak"));
+                        }
 
-                            std::fs::OpenOptions::new()
-                                .write(true)
-                                .create_new(true)
-                                .open(&out_path)
-                                .into_future()
-                                .from_err()
-                                .and_then(move |mut out_file| {
-                                    futures::stream::iter_ok(
-                                        file_map.blocks.into_iter().enumerate(),
-                                    )
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&out_path)
+                            .into_future()
+                            .from_err()
+                            .and_then(move |mut out_file| {
+                                let block_reporter = reporter.clone();
+                                futures::stream::iter_ok(file_map.blocks.into_iter().enumerate())
                                     .and_then(move |(block_no, block_hash_val)| {
+                                        reporter.add_note(|| {
+                                            format!(
+                                                "start block block_no:{}, block_hash: {:032x}",
+                                                block_no, block_hash_val
+                                            )
+                                        });
                                         connection
                                             .send(GetBlock {
                                                 hash,
@@ -258,18 +276,19 @@ impl State {
                                             })
                                     })
                                     .for_each(move |b: Block| {
+                                        block_reporter.add_note(|| {
+                                            format!("writing block block_no:{}", b.block_nr)
+                                        });
                                         out_file.write_all(b.bytes.as_slice())?;
                                         Ok(())
                                     })
                                     .and_then(|()| Ok(out_path))
-                                })
-                        })
-                        .collect()
-                        .and_then(|files| {
-                            Ok(HttpResponse::Ok().json(DownloadResult { files: files }))
-                        })
-                })
-                .map_err(|e| actix_web::error::ErrorInternalServerError(e)),
+                            })
+                    })
+                    .collect()
+                    .and_then(|files| Ok(HttpResponse::Ok().json(DownloadResult { files: files })))
+            })
+            .map_err(actix_web::error::ErrorInternalServerError),
         )
     }
 
@@ -288,11 +307,11 @@ impl State {
             db.send(database::GetHash(hash))
                 .flatten()
                 .map_err(|e| actix_web::error::ErrorInternalServerError(e))
-                .and_then(|o: Option<Arc<database::FileDesc>>| {
-                    o.ok_or(actix_web::error::ErrorBadRequest("hash not found"))
+                .and_then(|o: Option<(Arc<database::FileDesc>, _)>| {
+                    o.ok_or_else(|| actix_web::error::ErrorBadRequest("hash not found"))
                         .into_future()
                         .from_err()
-                        .and_then(|desc| {
+                        .and_then(|(desc, _)| {
                             futures::stream::iter_ok(desc.files.to_vec().into_iter().enumerate())
                                 .and_then(move |(_, (file_map, path_buf))| {
                                     let out_path = dest.join(&file_map.file_name);
@@ -311,7 +330,7 @@ impl State {
                         })
                         .and_then(|files| Ok(HttpResponse::Ok().json(DownloadResult { files })))
                 })
-                .map_err(|e| actix_web::error::ErrorInternalServerError(e)),
+                .map_err(actix_web::error::ErrorInternalServerError),
         )
     }
 }
@@ -329,24 +348,41 @@ fn api(
             files: Some(files),
             timeout,
             hash: None,
-        } => Box::new(state.upload(files, timeout)),
+            user,
+        } => {
+            let reporter = user_report::UserReportHandle::start(&user);
+            reporter.annotate("api", &("upload", &files, timeout));
+            Box::new(reporter.wrap_future("upload", state.upload(files, timeout, reporter.clone())))
+        }
         command::Command::Upload {
             files: None,
             timeout,
             hash: Some(hash),
-        } => Box::new(state.check(&hash)),
+            user,
+            ..
+        } => {
+            let reporter = user_report::UserReportHandle::start(&user);
+            reporter.annotate("api", &("check", &hash, timeout));
+            Box::new(reporter.wrap_future("check", state.check(&hash)))
+        }
         command::Command::Download {
             hash,
             dest,
             peers,
             timeout,
+            user,
         } => {
+            let reporter = user_report::UserReportHandle::start(&user);
+            reporter.annotate("api", &("download", &hash, &dest, &peers, timeout));
             if peers.len() == 0 {
                 // Legacy HyperG behaviour:
                 // If no peers were provided, mimic the download process by copying locally stored files
-                Box::new(state.mimic_download(hash, dest))
+                Box::new(reporter.wrap_future("mimic_download", state.mimic_download(hash, dest)))
             } else {
-                Box::new(state.download(hash, dest, peers, timeout))
+                Box::new(reporter.wrap_future(
+                    "download",
+                    state.download(hash, dest, peers, timeout, reporter.clone()),
+                ))
             }
         }
         other_command => {
@@ -380,7 +416,7 @@ fn list_resources(
                         .sum();
                     let valid_to = resource
                         .valid_to
-                        .map(|ts| ts.duration_since(UNIX_EPOCH).unwrap().as_secs());
+                        .and_then(|ts| Some(ts.duration_since(UNIX_EPOCH).ok()?.as_secs()));
 
                     serde_json::json!({
                         "hash": hash,
@@ -411,9 +447,9 @@ fn get_resource_info(
             .send(database::GetHash(hash))
             .flatten()
             .map_err(|e| actix_web::error::ErrorInternalServerError(e))
-            .and_then(|r: Option<Arc<database::FileDesc>>| match r {
+            .and_then(|r| match r {
                 None => Ok(HttpResponse::NotFound().body("resource not found")),
-                Some(file_desc) => {
+                Some((file_desc, _)) => {
                     let mut size: u64 = 0;
                     let files: Vec<(String, String)> = file_desc
                         .files
@@ -460,39 +496,8 @@ fn remove_resource(
     )
 }
 
-fn log_string_for_level(level: &Level) -> &'static str {
-    match level {
-        Level::Error => "error",
-        Level::Info => "info",
-        Level::Debug => "hyperg=debug,info",
-        Level::Trace => "hyperg=trace,info",
-        Level::Warn => "hyperg=info,warn",
-    }
-}
-
-fn is_dir_path(p: &Path) -> bool {
-    p.to_str()
-        .and_then(|s| s.chars().rev().next())
-        .map(|ch| ch == std::path::MAIN_SEPARATOR)
-        .unwrap_or(false)
-}
-
-fn detailed_format(
-    w: &mut dyn std::io::Write,
-    now: &mut flexi_logger::DeferredNow,
-    record: &flexi_logger::Record,
-) -> Result<(), std::io::Error> {
-    write!(
-        w,
-        "{} {} {} {}",
-        now.now().format("%Y-%m-%d %H:%M:%S"),
-        record.level(),
-        record.module_path().unwrap_or("<unnamed>"),
-        &record.args()
-    )
-}
-
 fn main() -> std::io::Result<()> {
+    user_report::init();
     let args = ServerOpts::from_args();
 
     if args.version {
@@ -500,37 +505,7 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
 
-    let log_builder = flexi_logger::Logger::with_env_or_str(log_string_for_level(&args.loglevel));
-
-    if let Some(logfile) = &args.logfile {
-        let logfile = logfile as &Path;
-
-        let log_builder = if is_dir_path(logfile) {
-            log_builder.directory(logfile)
-        } else {
-            match (logfile.file_name(), logfile.parent()) {
-                (Some(_file_name), Some(dir_name)) if dir_name.is_dir() => {
-                    log_builder.directory(dir_name).create_symlink(logfile)
-                }
-                _ => log_builder.create_symlink(logfile),
-            }
-        };
-        log_builder
-            .log_to_file()
-            .duplicate_to_stderr(Duplicate::Info)
-            .format_for_files(detailed_format)
-            .start()
-            .unwrap_or_else(|e| {
-                eprintln!("Error {}", e);
-                // fallback to stderr only logger.
-                flexi_logger::Logger::with_env_or_str(log_string_for_level(&args.loglevel))
-                    .start()
-                    .unwrap()
-            });
-    } else {
-        log_builder.start().unwrap();
-    }
-
+    log_config::init(args.loglevel, args.logfile.as_ref().map(AsRef::as_ref));
     version::startup_log();
 
     let sys = actix::System::new("hyperg");

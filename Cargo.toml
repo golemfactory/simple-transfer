@@ -1,12 +1,27 @@
 [package]
 name = "hyperg"
-version = "0.3.7-alpha.0"
+version = "0.3.8-alpha.0"
 authors = ["Golemfactory <contact@golem.network>"]
 edition = "2018"
 publish=false
 description="Simple resource transfer client-server for Brass Golem Network"
 
+[features]
+default = []
+#default = ['with-sentry']
+with-sentry=['sentry']
+
 [dependencies]
+
+[dependencies.sentry]
+version = "0.15.5"
+optional = true
+default-features=false
+features=["with_client_implementation", "with_default_transport", "with_panic", "with_failure", "with_device_info", "with_rust_info", "with_rustls"]
+
+[dependencies.openssl]
+version="0.10.20"
+optional = true
 
 [dependencies.actix]
 version = "0.8.2"
