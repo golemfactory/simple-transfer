@@ -4,7 +4,7 @@ on: [push]
 
 jobs:
   build:
-    name: Test on ${{ matrix.os }}
+    name: Test ${{ matrix.buildArgs }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -13,7 +13,7 @@ jobs:
           - ubuntu-latest
           - windows-latest
           - macOS-latest
-        buildArgs: ["","--featues=sentry"]
+        buildArgs: ["","--features=sentry"]
     steps:
     - uses: actions/checkout@v1
     - uses: actions-rs/toolchain@v1
